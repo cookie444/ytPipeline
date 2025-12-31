@@ -28,6 +28,7 @@ env/
 
 # Configuration
 config.json
+download_config.json
 
 # Output files
 output/
