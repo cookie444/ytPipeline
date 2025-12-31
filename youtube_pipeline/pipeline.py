@@ -267,7 +267,7 @@ class YouTubePipeline:
         remote_path = server_config.get('remote_path', '/tmp/')
         
         if not all([host, username]):
-            logger.error("Server configuration incomplete (missing host or username)")
+            logger.warning("Server configuration incomplete (missing host or username)")
             return False
         
         try:
@@ -336,10 +336,13 @@ class YouTubePipeline:
             # Step 4: Create ZIP
             zip_file = self.create_zip(stems, self.temp_dir)
             
-            # Step 5: Upload to server
-            if not self.upload_to_server(zip_file):
-                logger.error("Failed to upload to server")
-                return False
+            # Step 5: Upload to server (optional)
+            server_config = self.config.get('server', {})
+            if server_config.get('host') and server_config.get('username'):
+                if not self.upload_to_server(zip_file):
+                    logger.warning("Failed to upload to server, but continuing...")
+            else:
+                logger.info("No server configuration provided, skipping upload")
             
             logger.info("=" * 60)
             logger.info("Pipeline completed successfully!")

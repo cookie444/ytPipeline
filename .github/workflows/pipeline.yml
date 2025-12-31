@@ -23,22 +23,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Create config.json from secrets
+      - name: Create config.json (no server upload)
         run: |
           mkdir -p youtube_pipeline
-          SERVER_PORT="${{ secrets.SERVER_PORT }}"
-          SERVER_REMOTE_PATH="${{ secrets.SERVER_REMOTE_PATH }}"
           cat > youtube_pipeline/config.json << EOF
           {
             "server": {
-              "host": "${{ secrets.SERVER_HOST }}",
-              "port": ${SERVER_PORT:-22},
-              "username": "${{ secrets.SERVER_USERNAME }}",
-              "password": "${{ secrets.SERVER_PASSWORD }}",
-              "key_file": null,
-              "remote_path": "${SERVER_REMOTE_PATH:-/tmp/}"
+              "host": null,
+              "username": null
             },
-            "cleanup": true
+            "cleanup": false
           }
           EOF
       
@@ -49,6 +43,7 @@ jobs:
       - name: Run pipeline
         working-directory: ./youtube_pipeline
         run: |
+          mkdir -p output
           docker run --rm \
             -v $(pwd)/config.json:/app/config.json:ro \
             -v $(pwd)/output:/app/output \
@@ -59,7 +54,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: separated-stems
+          name: separated-stems-${{ github.run_number }}
           path: youtube_pipeline/output/
-          retention-days: 7
+          retention-days: 90
+          if-no-files-found: warn
 

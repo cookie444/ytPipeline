@@ -1,28 +1,8 @@
 # GitHub Actions Setup Guide
 
-## Required GitHub Secrets
+## No Secrets Required! 🎉
 
-To use this workflow, you need to add the following secrets to your GitHub repository:
-
-1. Go to your repository on GitHub
-2. Navigate to **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret** and add:
-
-### Required Secrets:
-- **`SERVER_HOST`** - Your server hostname or IP address (e.g., `example.com` or `192.168.1.100`)
-- **`SERVER_USERNAME`** - SSH username for your server
-- **`SERVER_PASSWORD`** - SSH password (or use SSH key method below)
-
-### Optional Secrets:
-- **`SERVER_PORT`** - SSH port (defaults to 22 if not set)
-- **`SERVER_REMOTE_PATH`** - Remote directory path (defaults to `/tmp/` if not set)
-
-## Alternative: SSH Key Authentication
-
-If you prefer SSH key authentication instead of password:
-
-1. Add secret **`SERVER_SSH_KEY`** - Your private SSH key content
-2. Modify the workflow to use the key (see workflow file comments)
+This workflow runs without needing any server credentials. Files are saved as GitHub Actions artifacts that you can download.
 
 ## How to Run
 
@@ -35,8 +15,48 @@ If you prefer SSH key authentication instead of password:
 The workflow will:
 - Build the Docker container
 - Download and process the audio
-- Upload results to your server
-- Save output files as downloadable artifacts (7 days retention)
+- Separate audio into stems (drums, vocals, guitar, synth)
+- Save output files as downloadable artifacts (90 days retention)
+
+## Downloading Artifacts to Your Local Drive
+
+### Option 1: Manual Download
+1. After workflow completes, go to the **Actions** tab
+2. Click on the completed workflow run
+3. Scroll down to **Artifacts** section
+4. Click **separated-stems-XXX** to download
+5. Extract the ZIP file to `F:\Split YT Links Project`
+
+### Option 2: Automated Download Script
+Use the included script to automatically download the latest artifacts:
+
+1. **Create a GitHub Personal Access Token:**
+   - Go to: https://github.com/settings/tokens
+   - Click "Generate new token (classic)"
+   - Select scope: `repo` (for private repos) or `public_repo` (for public repos)
+   - Copy the token
+
+2. **Run the download script:**
+   ```bash
+   cd youtube_pipeline
+   python download_artifacts.py --latest --output "F:\Split YT Links Project"
+   ```
+   Or set the token as environment variable:
+   ```bash
+   set GITHUB_TOKEN=your_token_here
+   python download_artifacts.py --latest
+   ```
+
+3. **Or use the batch file:**
+   ```bash
+   download_artifacts.bat YOUR_GITHUB_TOKEN
+   ```
+
+### Script Options:
+- `--list` - List all available artifacts
+- `--latest` - Download the most recent artifact
+- `--artifact-id ID` - Download a specific artifact by ID
+- `--output PATH` - Specify output directory (default: `F:\Split YT Links Project`)
 
 ## Free Tier Limits
 
