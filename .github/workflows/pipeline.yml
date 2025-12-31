@@ -1,0 +1,65 @@
+name: YouTube Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'YouTube search query (song name, artist, etc.)'
+        required: true
+        type: string
+  # Uncomment to run on a schedule (example: daily at 2 AM UTC)
+  # schedule:
+  #   - cron: '0 2 * * *'
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hour max for free tier
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Create config.json from secrets
+        run: |
+          mkdir -p youtube_pipeline
+          SERVER_PORT="${{ secrets.SERVER_PORT }}"
+          SERVER_REMOTE_PATH="${{ secrets.SERVER_REMOTE_PATH }}"
+          cat > youtube_pipeline/config.json << EOF
+          {
+            "server": {
+              "host": "${{ secrets.SERVER_HOST }}",
+              "port": ${SERVER_PORT:-22},
+              "username": "${{ secrets.SERVER_USERNAME }}",
+              "password": "${{ secrets.SERVER_PASSWORD }}",
+              "key_file": null,
+              "remote_path": "${SERVER_REMOTE_PATH:-/tmp/}"
+            },
+            "cleanup": true
+          }
+          EOF
+      
+      - name: Build Docker image
+        working-directory: ./youtube_pipeline
+        run: docker build -t youtube-pipeline:latest .
+      
+      - name: Run pipeline
+        working-directory: ./youtube_pipeline
+        run: |
+          docker run --rm \
+            -v $(pwd)/config.json:/app/config.json:ro \
+            -v $(pwd)/output:/app/output \
+            youtube-pipeline:latest \
+            python pipeline.py "${{ inputs.query }}"
+      
+      - name: Upload output artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: separated-stems
+          path: youtube_pipeline/output/
+          retention-days: 7
+

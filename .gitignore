@@ -1,0 +1,63 @@
+# Exclude other project folders
+JUCE/
+webstore/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Configuration (contains secrets)
+config.json
+
+# Output files
+output/
+*.wav
+*.mp3
+*.zip
+*.m4a
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Demucs cache
+.demucs_cache/
+
+# Temporary files
+tmp/
+temp/
+
