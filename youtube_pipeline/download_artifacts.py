@@ -5,6 +5,7 @@ Download artifacts from GitHub Actions and save to local drive.
 
 import os
 import sys
+import json
 import zipfile
 import requests
 from pathlib import Path
@@ -12,6 +13,29 @@ import argparse
 
 # Default output directory
 DEFAULT_OUTPUT_DIR = Path("F:/Split YT Links Project")
+CONFIG_FILE = Path(__file__).parent / "download_config.json"
+
+def load_config():
+    """Load download configuration from file."""
+    config = {
+        "download_location": str(DEFAULT_OUTPUT_DIR),
+        "github": {
+            "owner": "cookie444",
+            "repo": "ytPipeline",
+            "workflow_name": "YouTube Pipeline"
+        }
+    }
+    
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                file_config = json.load(f)
+                config.update(file_config)
+        except Exception as e:
+            print(f"Warning: Could not load config file: {e}")
+            print("Using defaults...")
+    
+    return config
 
 def download_artifact(owner: str, repo: str, artifact_id: int, token: str, output_dir: Path):
     """Download a GitHub Actions artifact."""
@@ -90,17 +114,50 @@ def list_artifacts(owner: str, repo: str, token: str, workflow_name: str = None)
     return artifacts
 
 def main():
-    parser = argparse.ArgumentParser(description="Download GitHub Actions artifacts")
-    parser.add_argument("--owner", default="cookie444", help="GitHub owner/username")
-    parser.add_argument("--repo", default="ytPipeline", help="Repository name")
+    # Load config first
+    config = load_config()
+    
+    parser = argparse.ArgumentParser(
+        description="Download GitHub Actions artifacts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+Examples:
+  # Download latest artifact to configured location
+  python download_artifacts.py --latest
+  
+  # Download to custom location
+  python download_artifacts.py --latest --output "C:/MyDownloads"
+  
+  # List all artifacts
+  python download_artifacts.py --list
+  
+  # Download specific artifact
+  python download_artifacts.py --artifact-id 12345
+
+Configuration:
+  Create download_config.json in the same directory to set default download location.
+  Example: {{"download_location": "F:/Split YT Links Project"}}
+        """
+    )
+    parser.add_argument("--owner", default=config["github"]["owner"], help="GitHub owner/username")
+    parser.add_argument("--repo", default=config["github"]["repo"], help="Repository name")
     parser.add_argument("--token", help="GitHub personal access token (or set GITHUB_TOKEN env var)")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory")
+    parser.add_argument("--output", type=Path, default=Path(config["download_location"]), help="Output directory")
     parser.add_argument("--list", action="store_true", help="List available artifacts")
     parser.add_argument("--artifact-id", type=int, help="Specific artifact ID to download")
     parser.add_argument("--latest", action="store_true", help="Download latest artifact")
-    parser.add_argument("--workflow", default="YouTube Pipeline", help="Workflow name filter")
+    parser.add_argument("--workflow", default=config["github"]["workflow_name"], help="Workflow name filter")
+    parser.add_argument("--config", help="Path to config file (default: download_config.json)")
     
     args = parser.parse_args()
+    
+    # Override config file if specified
+    if args.config:
+        global CONFIG_FILE
+        CONFIG_FILE = Path(args.config)
+        config = load_config()
+        if not args.output or args.output == Path(config["download_location"]):
+            args.output = Path(config["download_location"])
     
     # Get token from env or arg
     token = args.token or os.getenv("GITHUB_TOKEN")
@@ -109,6 +166,12 @@ def main():
         print("Create a token at: https://github.com/settings/tokens")
         print("Required scope: repo (for private repos) or public_repo (for public repos)")
         sys.exit(1)
+    
+    # Show configured download location
+    print(f"Download location: {args.output}")
+    if not args.output.exists():
+        print(f"Creating directory: {args.output}")
+        args.output.mkdir(parents=True, exist_ok=True)
     
     if args.list:
         print("Fetching artifacts...")

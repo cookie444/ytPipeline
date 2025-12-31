@@ -54,13 +54,59 @@ class YouTubePipeline:
     def search_youtube(self, query: str) -> Optional[str]:
         """
         Search YouTube for a song and return the first video URL.
+        Also handles direct YouTube URLs.
         
         Args:
-            query: Search query (song name, artist, etc.)
+            query: Search query (song name, artist, etc.) or YouTube URL
             
         Returns:
             YouTube video URL or None if not found
         """
+        # Check if input is already a YouTube URL
+        import re
+        import urllib.parse
+        
+        # Pattern to match YouTube URLs with video ID
+        youtube_url_patterns = [
+            r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})',
+            r'(?:https?://)?(?:www\.)?youtube\.com/embed/([a-zA-Z0-9_-]{11})',
+        ]
+        
+        for pattern in youtube_url_patterns:
+            match = re.search(pattern, query)
+            if match:
+                video_id = match.group(1)
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                logger.info(f"Detected YouTube URL, extracted video ID: {video_id}")
+                logger.info(f"Using video URL: {video_url}")
+                return video_url
+        
+        # Also try parsing as URL to extract video ID from query parameters
+        try:
+            parsed = urllib.parse.urlparse(query)
+            if 'youtube.com' in parsed.netloc or 'youtu.be' in parsed.netloc:
+                if parsed.path == '/watch' or parsed.path.startswith('/watch/'):
+                    # Extract v parameter from query string
+                    params = urllib.parse.parse_qs(parsed.query)
+                    if 'v' in params and params['v']:
+                        video_id = params['v'][0]
+                        if len(video_id) == 11:  # YouTube video IDs are 11 characters
+                            video_url = f"https://www.youtube.com/watch?v={video_id}"
+                            logger.info(f"Detected YouTube URL from query params, video ID: {video_id}")
+                            logger.info(f"Using video URL: {video_url}")
+                            return video_url
+                elif parsed.path.startswith('/') and len(parsed.path) > 1:
+                    # Handle youtu.be short URLs
+                    video_id = parsed.path.lstrip('/')
+                    if len(video_id) == 11:
+                        video_url = f"https://www.youtube.com/watch?v={video_id}"
+                        logger.info(f"Detected youtu.be URL, video ID: {video_id}")
+                        logger.info(f"Using video URL: {video_url}")
+                        return video_url
+        except Exception as e:
+            logger.debug(f"URL parsing failed: {e}, treating as search query")
+        
+        # If not a URL, search YouTube
         logger.info(f"Searching YouTube for: {query}")
         
         ydl_opts = {
