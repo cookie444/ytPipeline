@@ -30,6 +30,11 @@ env/
 config.json
 download_config.json
 
+# Cookie files (contain sensitive authentication data)
+cookies.txt
+*.cookies.txt
+*_cookies.txt
+
 # Output files
 output/
 *.wav
