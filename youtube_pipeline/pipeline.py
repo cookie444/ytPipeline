@@ -53,13 +53,26 @@ class YouTubePipeline:
         
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from JSON file."""
+        # Resolve config path relative to script location if not absolute
+        if not os.path.isabs(config_path):
+            # Get directory where this script is located
+            script_dir = Path(__file__).parent
+            config_path = script_dir / config_path
+        
+        config_path = Path(config_path)
+        
         try:
+            if not config_path.exists():
+                logger.error(f"Configuration file {config_path} not found")
+                logger.error(f"Current working directory: {os.getcwd()}")
+                logger.error(f"Script directory: {Path(__file__).parent}")
+                raise FileNotFoundError(f"Configuration file {config_path} not found")
+            
             with open(config_path, 'r') as f:
                 config = json.load(f)
             logger.info(f"Loaded configuration from {config_path}")
             return config
         except FileNotFoundError:
-            logger.error(f"Configuration file {config_path} not found")
             raise
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in configuration file: {e}")
@@ -93,13 +106,34 @@ class YouTubePipeline:
     def search_youtube(self, query: str) -> Optional[str]:
         """
         Search YouTube for a song and return the first video URL.
+        Also handles direct YouTube URLs (with or without query parameters).
         
         Args:
-            query: Search query (song name, artist, etc.)
+            query: Search query (song name, artist, etc.) or YouTube URL
             
         Returns:
             YouTube video URL or None if not found
         """
+        logger.info(f"Processing query: {query}")
+        
+        # Check if input is already a YouTube URL
+        import re
+        from urllib.parse import urlparse, parse_qs
+        
+        # Pattern to match YouTube URLs
+        youtube_pattern = r'(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})'
+        match = re.search(youtube_pattern, query)
+        
+        if match:
+            # Extract video ID from URL
+            video_id = match.group(1)
+            # Create clean URL without extra parameters
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"Detected YouTube URL, extracted video ID: {video_id}")
+            logger.info(f"Using clean URL: {video_url}")
+            return video_url
+        
+        # If not a URL, perform search
         logger.info(f"Searching YouTube for: {query}")
         
         ydl_opts = {
