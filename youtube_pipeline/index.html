@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Audio Processing Pipeline</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎵 YouTube Audio Processing Pipeline</h1>
+            <p class="subtitle">Download, separate, and process YouTube audio</p>
+        </header>
+
+        <main>
+            <div class="card">
+                <h2>Process Song</h2>
+                
+                <div class="form-group">
+                    <label for="youtube-input">YouTube URL or Search Query:</label>
+                    <input 
+                        type="text" 
+                        id="youtube-input" 
+                        placeholder="https://www.youtube.com/watch?v=... or 'artist - song title'"
+                        class="input-field"
+                    >
+                    <small class="help-text">Enter a YouTube URL or search for a song</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="output-dir">Output Directory:</label>
+                    <div class="input-group">
+                        <input 
+                            type="text" 
+                            id="output-dir" 
+                            placeholder="/app/output"
+                            class="input-field"
+                        >
+                        <button id="browse-btn" class="btn btn-secondary">Choose Location</button>
+                    </div>
+                    <small class="help-text">Where to save the processed files</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input 
+                            type="checkbox" 
+                            id="upload-to-server"
+                            class="checkbox-input"
+                        >
+                        <span>Upload to server after processing</span>
+                    </label>
+                    <small class="help-text">Enable this to upload the ZIP file to your configured server</small>
+                </div>
+
+                <div class="cookie-reminder">
+                    <strong>🔒 Cookie File Reminder:</strong> Make sure your cookie file (cookies.txt or www.youtube.com_cookies.txt) is up to date for age-restricted videos. Export fresh cookies from your browser if downloads fail.
+                </div>
+
+                <button id="process-btn" class="btn btn-primary">
+                    <span id="btn-text">Process Song</span>
+                    <span id="btn-spinner" class="spinner hidden"></span>
+                </button>
+
+                <div id="status" class="status-message"></div>
+            </div>
+
+            <div class="card">
+                <h2>Progress</h2>
+                <div class="progress-container">
+                    <div id="progress-bar" class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <div id="progress-text" class="progress-text">Ready</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Processing Log</h2>
+                <div id="log-output" class="log-output"></div>
+                <button id="clear-log-btn" class="btn btn-secondary btn-small">Clear Log</button>
+            </div>
+        </main>
+
+        <footer>
+            <p>YouTube Audio Processing Pipeline v1.0</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
+
