@@ -3,6 +3,8 @@ const API_BASE = window.location.origin;
 
 let isProcessing = false;
 let logPollInterval = null;
+let statusPollInterval = null;
+let currentJobId = null;
 
 // DOM Elements
 const youtubeInput = document.getElementById('youtube-input');
@@ -87,19 +89,32 @@ processBtn.addEventListener('click', async () => {
 
         const data = await response.json();
 
-        if (data.success) {
-            showStatus(data.message || 'Processing completed successfully!', 'success');
-            updateProgress(100, 'Complete!');
-            addLog('success', 'Pipeline completed successfully');
+        if (data.success && data.job_id) {
+            // Job queued successfully, start polling for status
+            currentJobId = data.job_id;
+            const queuePos = data.queue_position || 0;
+            
+            if (queuePos > 0) {
+                showStatus(`Job queued (position ${queuePos} in queue)`, 'info');
+                updateProgress(5, `Waiting in queue (position ${queuePos})...`);
+                addLog('info', `Job ${data.job_id} queued. Position: ${queuePos}`);
+            } else {
+                showStatus('Job started processing', 'info');
+                updateProgress(10, 'Processing started...');
+                addLog('info', `Job ${data.job_id} started processing`);
+            }
+            
+            // Start polling for job status
+            startStatusPolling(data.job_id);
         } else {
-            showStatus(data.message || data.error || 'Processing failed', 'error');
+            showStatus(data.message || data.error || 'Failed to queue job', 'error');
             updateProgress(0, 'Failed');
-            addLog('error', data.error || 'Pipeline execution failed');
+            addLog('error', data.error || 'Failed to queue job');
+            stopProcessing();
         }
     } catch (error) {
         showStatus(`Error: ${error.message}`, 'error');
         addLog('error', `Request failed: ${error.message}`);
-    } finally {
         stopProcessing();
     }
 });
@@ -128,6 +143,73 @@ function stopProcessing() {
     youtubeInput.disabled = false;
     if (logPollInterval) {
         clearInterval(logPollInterval);
+    }
+    if (statusPollInterval) {
+        clearInterval(statusPollInterval);
+    }
+    currentJobId = null;
+}
+
+// Start polling for job status
+function startStatusPolling(jobId) {
+    // Clear any existing polling
+    if (statusPollInterval) {
+        clearInterval(statusPollInterval);
+    }
+    
+    // Poll immediately, then every 2 seconds
+    pollJobStatus(jobId);
+    statusPollInterval = setInterval(() => {
+        pollJobStatus(jobId);
+    }, 2000);
+}
+
+// Poll job status from server
+async function pollJobStatus(jobId) {
+    try {
+        const response = await fetch(`${API_BASE}/status/${jobId}`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            addLog('error', `Failed to get job status: ${data.error}`);
+            return;
+        }
+        
+        const status = data.status;
+        const progress = data.progress || 0;
+        const message = data.message || 'Processing...';
+        const queuePosition = data.queue_position;
+        
+        // Update UI
+        updateProgress(progress, message);
+        addLog('info', `[${status}] ${message} (${progress}%)`);
+        
+        // Handle queue position
+        if (queuePosition > 0 && status === 'pending') {
+            updateProgress(5, `Waiting in queue (position ${queuePosition})...`);
+            showStatus(`Queued (position ${queuePosition} in queue)`, 'info');
+        } else if (status === 'processing') {
+            showStatus('Processing...', 'info');
+        } else if (status === 'pending' && queuePosition === 0) {
+            showStatus('Starting soon...', 'info');
+        }
+        
+        // Handle completion
+        if (status === 'completed') {
+            clearInterval(statusPollInterval);
+            showStatus('Processing completed successfully!', 'success');
+            updateProgress(100, 'Complete!');
+            addLog('success', 'Pipeline completed successfully');
+            stopProcessing();
+        } else if (status === 'failed') {
+            clearInterval(statusPollInterval);
+            showStatus(`Processing failed: ${data.error || 'Unknown error'}`, 'error');
+            updateProgress(0, 'Failed');
+            addLog('error', `Pipeline failed: ${data.error || 'Unknown error'}`);
+            stopProcessing();
+        }
+    } catch (error) {
+        addLog('error', `Error polling status: ${error.message}`);
     }
 }
 
