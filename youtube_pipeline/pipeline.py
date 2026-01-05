@@ -183,15 +183,28 @@ class YouTubePipeline:
         logger.info(f"Downloading audio from: {video_url}")
         
         # Build yt-dlp options with cookie support
-        # Use mobile clients to avoid YouTube's challenge solving requirements
-        # Try multiple format strings in order of preference
-        # Start with most permissive and work down
+        # Try different client/format combinations
+        # Some videos work better with web client, others with mobile
+        client_configs = [
+            # Try web client first (has more format options) if cookies are available
+            {'player_client': ['web'], 'name': 'web'} if self.cookie_file else None,
+            # Then try mobile clients
+            {'player_client': ['ios'], 'name': 'ios'},
+            {'player_client': ['android'], 'name': 'android'},
+            {'player_client': ['ios', 'android'], 'name': 'ios+android'},
+            # Finally try without player_client restriction
+            {'player_client': None, 'name': 'default'},
+        ]
+        # Filter out None entries
+        client_configs = [c for c in client_configs if c is not None]
+        
+        # Format strings to try (most permissive first)
         format_strings = [
-            None,  # No format specified - let yt-dlp choose automatically (most permissive)
-            'best',  # Best available format
-            'bestvideo+bestaudio/best',  # Best video + audio combination
-            'bestaudio/best',  # Best audio or best with audio
-            'worst',  # Fallback to worst if all else fails
+            None,  # No format - let yt-dlp auto-select
+            'best',  # Best available
+            'bestvideo*+bestaudio/best',  # Best video+audio combo
+            'bestaudio/best',  # Best audio or best
+            'worst',  # Worst as last resort
         ]
         
         ydl_opts_base = {
@@ -204,12 +217,6 @@ class YouTubePipeline:
             'quiet': False,
             'no_warnings': False,
             'age_limit': None,  # Don't restrict by age
-            # Use mobile clients to avoid challenge solving (ios/android work better)
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['ios', 'android'],  # Mobile clients avoid challenges
-                }
-            },
             # Additional options
             'writesubtitles': False,
             'writeautomaticsub': False,
@@ -221,67 +228,84 @@ class YouTubePipeline:
             ydl_opts_base['cookiefile'] = self.cookie_file
             logger.info(f"Using authentication cookies from: {self.cookie_file}")
         
-        # Try each format string until one works
+        # Try each client/format combination until one works
         last_error = None
-        for format_str in format_strings:
-            try:
-                ydl_opts = ydl_opts_base.copy()
-                if format_str is not None:
-                    ydl_opts['format'] = format_str
-                    logger.info(f"Trying format string: {format_str}")
-                else:
-                    logger.info("Trying with no format specified (let yt-dlp auto-select)")
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(video_url, download=True)
-                    title = info.get('title', 'audio')
-                    self.video_title = title  # Store for ZIP naming
+        for client_config in client_configs:
+            for format_str in format_strings:
+                try:
+                    ydl_opts = ydl_opts_base.copy()
+                    
+                    # Set player_client if specified
+                    if client_config['player_client'] is not None:
+                        ydl_opts['extractor_args'] = {
+                            'youtube': {
+                                'player_client': client_config['player_client'],
+                            }
+                        }
+                    
+                    # Set format if specified
+                    if format_str is not None:
+                        ydl_opts['format'] = format_str
+                    
+                    client_name = client_config['name']
                     format_desc = format_str if format_str else 'auto'
-                    logger.info(f"Successfully extracted info with format '{format_desc}'. Title: {title}")
+                    logger.info(f"Trying client '{client_name}' with format '{format_desc}'")
+                
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(video_url, download=True)
+                        title = info.get('title', 'audio')
+                        self.video_title = title  # Store for ZIP naming
+                        logger.info(f"Successfully extracted info with client '{client_name}' format '{format_desc}'. Title: {title}")
                     
-                    # Wait for postprocessor
-                    import time
-                    time.sleep(2)
-                    
-                    # Find the downloaded/converted WAV file
-                    wav_files = list(output_path.glob("*.wav"))
-                    if wav_files:
-                        wav_file = wav_files[0]
-                        logger.info(f"Downloaded audio to: {wav_file}")
-                        return wav_file
-                    
-                    # If no WAV found, check for other audio formats
-                    audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
-                    if audio_files:
-                        logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
-                        logger.warning("Postprocessor may have failed. Trying to convert manually...")
-                        raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
-                    
-                    # Check what files were actually downloaded
-                    all_files = list(output_path.glob("*"))
-                    error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
-                    logger.error(error_detail)
-                    raise Exception(f"Download failed: {error_detail}")
-                    
-            except yt_dlp.utils.DownloadError as e:
-                error_msg = str(e)
-                format_desc = format_str if format_str else 'auto'
-                if 'format is not available' in error_msg.lower() or 'requested format' in error_msg.lower():
-                    logger.warning(f"Format '{format_desc}' not available, trying next format...")
+                        # Wait for postprocessor
+                        import time
+                        time.sleep(2)
+                        
+                        # Find the downloaded/converted WAV file
+                        wav_files = list(output_path.glob("*.wav"))
+                        if wav_files:
+                            wav_file = wav_files[0]
+                            logger.info(f"Downloaded audio to: {wav_file}")
+                            return wav_file
+                        
+                        # If no WAV found, check for other audio formats
+                        audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
+                        if audio_files:
+                            logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
+                            logger.warning("Postprocessor may have failed. Trying to convert manually...")
+                            raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
+                        
+                        # Check what files were actually downloaded
+                        all_files = list(output_path.glob("*"))
+                        error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
+                        logger.error(error_detail)
+                        raise Exception(f"Download failed: {error_detail}")
+                        
+                except yt_dlp.utils.DownloadError as e:
+                    error_msg = str(e)
+                    if 'format is not available' in error_msg.lower() or 'requested format' in error_msg.lower():
+                        logger.warning(f"Client '{client_name}' format '{format_desc}' not available, trying next...")
+                        last_error = e
+                        continue  # Try next format/client combo
+                    else:
+                        # Different error - might be authentication or other issue
+                        # If it's not a format error, try next client/format combo
+                        if 'age' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
+                            logger.warning(f"Authentication issue with client '{client_name}', trying next...")
+                            last_error = e
+                            continue
+                        # For other errors, try next combo
+                        logger.warning(f"Error with client '{client_name}' format '{format_desc}': {error_msg[:100]}, trying next...")
+                        last_error = e
+                        continue
+                except Exception as e:
+                    # If we get here and it's not a format error, check if we got the file
+                    if 'Postprocessor failed' in str(e) or 'No audio file found' in str(e):
+                        raise  # Re-raise these
+                    # Otherwise, try next combo
+                    logger.warning(f"Error with client '{client_name}' format '{format_desc}': {e}, trying next...")
                     last_error = e
-                    continue  # Try next format
-                else:
-                    # Different error, re-raise
-                    raise
-            except Exception as e:
-                # If we get here and it's not a format error, check if we got the file
-                if 'Postprocessor failed' in str(e) or 'No audio file found' in str(e):
-                    raise  # Re-raise these
-                # Otherwise, try next format
-                format_desc = format_str if format_str else 'auto'
-                logger.warning(f"Error with format '{format_desc}': {e}, trying next format...")
-                last_error = e
-                continue
+                    continue
         
         # If all formats failed, raise the last error
         if last_error:
