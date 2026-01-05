@@ -22,6 +22,11 @@ COPY . .
 # Create output directory
 RUN mkdir -p /app/output
 
+# Create default config.json if it doesn't exist
+RUN if [ ! -f /app/config.json ]; then \
+    echo '{"server": {"host": null, "port": 22, "username": null, "password": null, "key_file": null, "remote_path": "/tmp/uploads/"}, "cleanup": true}' > /app/config.json; \
+    fi
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=utf-8
