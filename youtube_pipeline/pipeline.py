@@ -184,9 +184,14 @@ class YouTubePipeline:
         
         # Build yt-dlp options with cookie support
         # Use mobile clients to avoid YouTube's challenge solving requirements
-        ydl_opts = {
-            # Flexible format selection - prefer audio, fallback to video with audio
-            'format': 'bestaudio/best[height<=720]/best',
+        # Try multiple format strings in order of preference
+        format_strings = [
+            'bestaudio/best',  # Most flexible - any audio or video with audio
+            'best',  # Just get the best available format
+            'worst',  # Fallback to worst if best fails (shouldn't happen but safer)
+        ]
+        
+        ydl_opts_base = {
             'outtmpl': str(output_path / '%(title)s.%(ext)s'),
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -210,125 +215,78 @@ class YouTubePipeline:
         
         # Add cookie file if found
         if self.cookie_file:
-            ydl_opts['cookiefile'] = self.cookie_file
+            ydl_opts_base['cookiefile'] = self.cookie_file
             logger.info(f"Using authentication cookies from: {self.cookie_file}")
         
-        try:
-            logger.info(f"Attempting download with yt-dlp. Cookie file: {self.cookie_file or 'None'}")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                title = info.get('title', 'audio')
-                self.video_title = title  # Store for ZIP naming
-                logger.info(f"Successfully extracted info. Title: {title}")
+        # Try each format string until one works
+        last_error = None
+        for format_str in format_strings:
+            try:
+                ydl_opts = ydl_opts_base.copy()
+                ydl_opts['format'] = format_str
+                logger.info(f"Trying format string: {format_str}")
                 
-                # Clean title for filename matching
-                import re
-                safe_title = re.sub(r'[<>:"/\\|?*]', '', title)
-                
-                # Wait a moment for postprocessor to finish
-                import time
-                time.sleep(2)  # Increased wait time for postprocessing
-                
-                # Find the downloaded/converted WAV file
-                wav_files = list(output_path.glob("*.wav"))
-                if wav_files:
-                    wav_file = wav_files[0]
-                    logger.info(f"Downloaded audio to: {wav_file}")
-                    return wav_file
-                
-                # If no WAV found, check for other audio formats
-                audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
-                if audio_files:
-                    logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
-                    logger.warning("Postprocessor may have failed. Trying to convert manually...")
-                    # Could add manual conversion here if needed
-                    raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
-                
-                # Check what files were actually downloaded
-                all_files = list(output_path.glob("*"))
-                error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
-                logger.error(error_detail)
-                logger.error("This video may not have audio available, or download failed.")
-                raise Exception(f"Download failed: {error_detail}")
-                
-        except Exception as e:
-            error_msg = str(e)
-            error_type = type(e).__name__
-            logger.error(f"Error downloading audio ({error_type}): {error_msg}")
-            import traceback
-            full_traceback = traceback.format_exc()
-            logger.error(f"Full traceback: {full_traceback}")
-            
-            # Extract more details from yt-dlp errors
-            if hasattr(e, 'msg'):
-                error_msg = f"{error_type}: {e.msg}"
-            elif hasattr(e, 'args') and e.args:
-                error_msg = f"{error_type}: {e.args[0]}"
-            
-            # Re-raise with detailed message - this will be caught by the retry logic below
-            raise Exception(f"Download error: {error_msg}")
-            
-            # If age-restricted or sign-in required, try with different clients
-            if any(keyword in error_msg.lower() for keyword in ['age', 'sign in', 'inappropriate', 'confirm your age']):
-                logger.info("Age-restricted video detected. Trying alternative authentication methods...")
-                
-                # Strategy: Try different client combinations
-                # Mobile clients (ios/android) avoid YouTube's challenge solving
-                client_combos = [
-                    ['ios'],  # iOS client - most reliable
-                    ['android'],  # Android client
-                    ['ios', 'android'],  # Try both
-                    ['mweb'],  # Mobile web
-                    ['web'],  # Web client as last resort (may need challenge solving)
-                ]
-                
-                for clients in client_combos:
-                    try:
-                        logger.info(f"Retrying with client(s): {clients}")
-                        ydl_opts_retry = ydl_opts.copy()
-                        ydl_opts_retry['extractor_args'] = {
-                            'youtube': {
-                                'player_client': clients,
-                            }
-                        }
-                        # Ensure cookie file is still included
-                        if self.cookie_file:
-                            ydl_opts_retry['cookiefile'] = self.cookie_file
-                        
-                        with yt_dlp.YoutubeDL(ydl_opts_retry) as ydl:
-                            info = ydl.extract_info(video_url, download=True)
-                            title = info.get('title', 'audio')
-                            self.video_title = title  # Store for ZIP naming
-                            import time
-                            time.sleep(2)
-                            wav_files = list(output_path.glob("*.wav"))
-                            if wav_files:
-                                wav_file = wav_files[0]
-                                logger.info(f"Successfully downloaded audio to: {wav_file}")
-                                return wav_file
-                    except Exception as e2:
-                        logger.debug(f"Client {clients} failed: {e2}")
-                        continue
-                
-                # If all methods failed
-                logger.error("All download methods failed for age-restricted video.")
-                error_detail = "Age-restricted video: All download methods failed"
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=True)
+                    title = info.get('title', 'audio')
+                    self.video_title = title  # Store for ZIP naming
+                    logger.info(f"Successfully extracted info with format '{format_str}'. Title: {title}")
+                    
+                    # Wait for postprocessor
+                    import time
+                    time.sleep(2)
+                    
+                    # Find the downloaded/converted WAV file
+                    wav_files = list(output_path.glob("*.wav"))
+                    if wav_files:
+                        wav_file = wav_files[0]
+                        logger.info(f"Downloaded audio to: {wav_file}")
+                        return wav_file
+                    
+                    # If no WAV found, check for other audio formats
+                    audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
+                    if audio_files:
+                        logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
+                        logger.warning("Postprocessor may have failed. Trying to convert manually...")
+                        raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
+                    
+                    # Check what files were actually downloaded
+                    all_files = list(output_path.glob("*"))
+                    error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
+                    logger.error(error_detail)
+                    raise Exception(f"Download failed: {error_detail}")
+                    
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e)
+                if 'format is not available' in error_msg.lower():
+                    logger.warning(f"Format '{format_str}' not available, trying next format...")
+                    last_error = e
+                    continue  # Try next format
+                else:
+                    # Different error, re-raise
+                    raise
+            except Exception as e:
+                # If we get here and it's not a format error, check if we got the file
+                if 'Postprocessor failed' in str(e) or 'No audio file found' in str(e):
+                    raise  # Re-raise these
+                # Otherwise, try next format
+                logger.warning(f"Error with format '{format_str}': {e}, trying next format...")
+                last_error = e
+                continue
+        
+        # If all formats failed, raise the last error
+        if last_error:
+            error_msg = str(last_error)
+            # Check if it's an age-restricted video issue
+            if any(keyword in error_msg.lower() for keyword in ['age', 'sign in', 'inappropriate', 'confirm your age', 'bot']):
+                error_detail = "Age-restricted video or authentication required"
                 if self.cookie_file:
                     error_detail += f". Cookie file used: {self.cookie_file}"
-                    logger.warning(f"Cookie file was used: {self.cookie_file}")
-                    logger.warning("Possible issues:")
-                    logger.warning("  1. Cookies may be expired - export fresh cookies from browser")
-                    logger.warning("  2. Cookies may not include YouTube domain - ensure cookies.txt has .youtube.com cookies")
-                    logger.warning("  3. Video may require additional verification")
                 else:
-                    error_detail += ". No cookie file found"
-                    logger.warning("No cookie file found. Export cookies from your browser:")
-                    logger.warning("  - Install 'Get cookies.txt LOCALLY' extension")
-                    logger.warning("  - Export cookies from YouTube while logged in")
-                    logger.warning("  - Save as 'cookies.txt' in the project directory")
-            
-            # Raise exception with detailed error message
-            raise Exception(f"Download failed: {error_msg}. {error_detail}")
+                    error_detail += ". No cookie file found - please upload cookies.txt"
+                raise Exception(f"Download failed: {error_detail}. Original error: {error_msg}")
+            raise Exception(f"All format options failed. Last error: {error_msg}")
+        raise Exception("All format options exhausted")
     
     def separate_audio(self, audio_path: Path, output_dir: Path) -> Dict[str, Path]:
         """
