@@ -1,0 +1,31 @@
+# Render Blueprint for YouTube Audio Processing Pipeline
+# This file defines the infrastructure for deploying on Render
+
+services:
+  - type: web
+    name: youtube-pipeline
+    runtime: docker
+    plan: free  # Use free tier (can be upgraded)
+    region: oregon  # Choose your preferred region
+    buildCommand: docker build -t youtube-pipeline .
+    startCommand: python api_server.py
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: HOST
+        value: 0.0.0.0
+      - key: APP_PASSWORD
+        sync: false  # Set this in Render dashboard as a secret
+      - key: CONFIG_PATH
+        value: config.json
+      - key: SECRET_KEY
+        generateValue: true  # Auto-generate secret key
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: "utf-8"
+      - key: TORCHAUDIO_USE_SOUNDFILE
+        value: "1"
+    healthCheckPath: /health
+    autoDeploy: true  # Auto-deploy on git push
+

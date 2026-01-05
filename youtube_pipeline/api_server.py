@@ -4,7 +4,7 @@ REST API server for the YouTube Audio Processing Pipeline with Web GUI.
 Allows triggering the pipeline via HTTP requests with job queue system.
 """
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, session, redirect, url_for
 from flask_cors import CORS
 import logging
 import os
@@ -12,8 +12,10 @@ from pathlib import Path
 import threading
 import atexit
 from typing import Optional
+from functools import wraps
 from pipeline import YouTubePipeline
 from queue_manager import QueueManager
+import secrets
 
 # Get the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +24,11 @@ STATIC_DIR = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 CORS(app)  # Enable CORS for API access
 
+# Session configuration for password protection
+app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -29,12 +36,82 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = os.getenv('CONFIG_PATH', 'config.json')
 PORT = int(os.getenv('PORT', 5000))
 HOST = os.getenv('HOST', '0.0.0.0')
+# Password protection - set via environment variable
+APP_PASSWORD = os.getenv('APP_PASSWORD', 'changeme123')
 
 # Initialize queue manager
 queue_manager = QueueManager()
 
 
+def login_required(f):
+    """Decorator to require authentication for routes."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('authenticated', False):
+            if request.path.startswith('/static/'):
+                # Allow static files without authentication
+                return f(*args, **kwargs)
+            if request.path == '/login' or request.path == '/api/login':
+                return f(*args, **kwargs)
+            # For API endpoints, return 401
+            if request.path.startswith('/api/') or request.path.startswith('/process') or request.path.startswith('/status'):
+                return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            # For HTML pages, redirect to login
+            return redirect(url_for('login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route('/login', methods=['GET'])
+def login_page():
+    """Serve the login page."""
+    if session.get('authenticated', False):
+        return redirect(url_for('index'))
+    return send_from_directory(BASE_DIR, 'login.html')
+
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    """Handle login authentication."""
+    try:
+        data = request.get_json()
+        password = data.get('password', '')
+        
+        if password == APP_PASSWORD:
+            session['authenticated'] = True
+            logger.info("User authenticated successfully")
+            return jsonify({
+                'success': True,
+                'message': 'Authentication successful'
+            }), 200
+        else:
+            logger.warning("Failed login attempt")
+            return jsonify({
+                'success': False,
+                'error': 'Invalid password'
+            }), 401
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/logout', methods=['POST'])
+@login_required
+def logout():
+    """Handle logout."""
+    session.pop('authenticated', None)
+    logger.info("User logged out")
+    return jsonify({
+        'success': True,
+        'message': 'Logged out successfully'
+    }), 200
+
+
 @app.route('/')
+@login_required
 def index():
     """Serve the main HTML page."""
     return send_from_directory(BASE_DIR, 'index.html')
@@ -48,7 +125,7 @@ def static_files(filename):
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
+    """Health check endpoint (public, no auth required)."""
     return jsonify({'status': 'healthy', 'service': 'youtube-pipeline'})
 
 
@@ -71,17 +148,40 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
         pipeline = YouTubePipeline(config_path=CONFIG_PATH, output_dir=output_dir)
         
         progress_callback(20, "Searching YouTube...")
-        success = pipeline.run(query, upload_to_server=upload_to_server)
+        video_url = pipeline.search_youtube(query)
+        if not video_url:
+            raise Exception("Failed to find video on YouTube")
         
-        if success:
-            progress_callback(100, "Processing completed successfully!")
-            return {
-                'success': True,
-                'query': query,
-                'message': 'Song processed successfully'
-            }
-        else:
-            raise Exception("Pipeline execution failed")
+        progress_callback(30, "Downloading audio...")
+        audio_file = pipeline.download_audio(video_url, pipeline.temp_dir)
+        if not audio_file:
+            raise Exception("Failed to download audio")
+        
+        progress_callback(50, "Separating audio into stems...")
+        stems_dir = pipeline.temp_dir / "stems"
+        stems_dir.mkdir(exist_ok=True)
+        stems = pipeline.separate_audio(audio_file, stems_dir)
+        if not stems:
+            raise Exception("Failed to separate audio")
+        
+        progress_callback(80, "Creating ZIP archive...")
+        zip_file = pipeline.create_zip(stems, pipeline.output_dir, title=pipeline.video_title)
+        
+        if upload_to_server:
+            progress_callback(90, "Uploading to server...")
+            server_config = pipeline.config.get('server', {})
+            if server_config.get('host') and server_config.get('username'):
+                pipeline.upload_to_server(zip_file, server_config)
+            else:
+                logger.warning("Server upload requested but server not configured")
+        
+        progress_callback(100, "Processing completed successfully!")
+        return {
+            'success': True,
+            'query': query,
+            'message': 'Song processed successfully',
+            'zip_file': str(zip_file) if zip_file else None
+        }
             
     except Exception as e:
         error_msg = str(e)
@@ -90,6 +190,7 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
 
 
 @app.route('/process', methods=['POST'])
+@login_required
 def process_song():
     """
     Queue a YouTube song for processing.
@@ -151,6 +252,7 @@ def process_song():
 
 
 @app.route('/status/<job_id>', methods=['GET'])
+@login_required
 def get_job_status(job_id: str):
     """
     Get the status of a processing job.
@@ -181,6 +283,7 @@ def get_job_status(job_id: str):
 
 
 @app.route('/queue', methods=['GET'])
+@login_required
 def get_queue_info():
     """Get information about the current queue."""
     return jsonify({
@@ -191,6 +294,7 @@ def get_queue_info():
 
 
 @app.route('/status', methods=['GET'])
+@login_required
 def status():
     """Get API status."""
     return jsonify({

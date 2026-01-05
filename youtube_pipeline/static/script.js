@@ -32,13 +32,23 @@ function setDefaultOutputDir() {
     outputDirInput.value = '/app/output';
 }
 
-// Check API status
+// Check API status and authentication
 async function checkStatus() {
     try {
         const response = await fetch(`${API_BASE}/status`);
+        if (response.status === 401) {
+            // Not authenticated, redirect to login
+            window.location.href = '/login';
+            return;
+        }
         const data = await response.json();
         addLog('info', `API Status: ${data.status}`);
     } catch (error) {
+        // If it's a 401, redirect to login
+        if (error.message.includes('401') || error.message.includes('Authentication')) {
+            window.location.href = '/login';
+            return;
+        }
         addLog('error', `Failed to connect to API: ${error.message}`);
     }
 }
@@ -87,6 +97,12 @@ processBtn.addEventListener('click', async () => {
             })
         });
 
+        // Handle authentication errors
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+
         const data = await response.json();
 
         if (data.success && data.job_id) {
@@ -126,12 +142,11 @@ function startProcessing() {
     btnText.textContent = 'Processing...';
     btnSpinner.classList.remove('hidden');
     youtubeInput.disabled = true;
-    updateProgress(10, 'Starting...');
-    addLog('info', 'Starting pipeline...');
+    updateProgress(5, 'Submitting job...');
+    addLog('info', 'Submitting job to queue...');
     clearStatus();
     
-    // Simulate progress updates
-    simulateProgress();
+    // Don't simulate progress - we'll get real updates from queue polling
 }
 
 // Stop processing state
@@ -143,9 +158,11 @@ function stopProcessing() {
     youtubeInput.disabled = false;
     if (logPollInterval) {
         clearInterval(logPollInterval);
+        logPollInterval = null;
     }
     if (statusPollInterval) {
         clearInterval(statusPollInterval);
+        statusPollInterval = null;
     }
     currentJobId = null;
 }
@@ -168,6 +185,13 @@ function startStatusPolling(jobId) {
 async function pollJobStatus(jobId) {
     try {
         const response = await fetch(`${API_BASE}/status/${jobId}`);
+        
+        // Handle authentication errors
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+        
         const data = await response.json();
         
         if (!data.success) {
@@ -180,17 +204,24 @@ async function pollJobStatus(jobId) {
         const message = data.message || 'Processing...';
         const queuePosition = data.queue_position;
         
-        // Update UI
-        updateProgress(progress, message);
+        // Update UI with real progress from server
+        // Only update if we have valid progress data
+        if (progress !== undefined && progress !== null) {
+            updateProgress(progress, message);
+        }
         addLog('info', `[${status}] ${message} (${progress}%)`);
         
         // Handle queue position
         if (queuePosition > 0 && status === 'pending') {
-            updateProgress(5, `Waiting in queue (position ${queuePosition})...`);
+            // Show queue position with minimal progress
+            const queueProgress = Math.max(1, 5 - (queuePosition * 2)); // 1-5% based on position
+            updateProgress(queueProgress, `Waiting in queue (position ${queuePosition})...`);
             showStatus(`Queued (position ${queuePosition} in queue)`, 'info');
         } else if (status === 'processing') {
             showStatus('Processing...', 'info');
+            // Progress will come from server updates
         } else if (status === 'pending' && queuePosition === 0) {
+            updateProgress(10, 'Starting soon...');
             showStatus('Starting soon...', 'info');
         }
         
@@ -247,42 +278,29 @@ clearLogBtn.addEventListener('click', () => {
     addLog('info', 'Log cleared');
 });
 
-// Simulate progress updates (in real implementation, use WebSockets or polling)
-function simulateProgress() {
-    let progress = 10;
-    const uploadEnabled = uploadToServerCheckbox.checked;
-    const stages = [
-        { percent: 20, text: 'Searching YouTube...' },
-        { percent: 40, text: 'Downloading audio...' },
-        { percent: 60, text: 'Separating audio...' },
-        { percent: 80, text: 'Creating ZIP archive...' }
-    ];
-    
-    if (uploadEnabled) {
-        stages.push({ percent: 90, text: 'Uploading to server...' });
-    }
-    
-    let currentStage = 0;
-    
-    const interval = setInterval(() => {
-        if (!isProcessing) {
-            clearInterval(interval);
-            return;
+// Logout button
+const logoutBtn = document.getElementById('logout-btn');
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            const data = await response.json();
+            if (data.success) {
+                window.location.href = '/login';
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
+            // Redirect anyway
+            window.location.href = '/login';
         }
-        
-        // Gradually increase progress
-        progress += Math.random() * 3;
-        
-        // Move to next stage if threshold reached
-        if (currentStage < stages.length - 1 && progress >= stages[currentStage].percent) {
-            currentStage++;
-            addLog('info', stages[currentStage].text);
-        }
-        
-        // Cap at 90% until completion
-        if (progress > 90) progress = 90;
-        
-        updateProgress(progress, stages[currentStage].text);
-    }, 2000);
+    });
 }
+
+// Note: Progress updates now come from real-time queue status polling via pollJobStatus()
+// The simulateProgress() function has been removed in favor of actual progress from the server
 

@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+*.zip
+output/
+temp/
+downloads/
+separated/
+*.wav
+*.mp3
+*.m4a
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Config (should be set via env vars in production)
+config.json
+cookies.txt
+*.cookies.txt
+
+# Test files
+test_*.py
+*_test.py
+
