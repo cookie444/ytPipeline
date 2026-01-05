@@ -81,12 +81,17 @@ class YouTubePipeline:
     def _find_cookie_file(self) -> Optional[str]:
         """Find cookie file in common locations."""
         import time
+        # Get the directory where this script is located (app directory)
+        script_dir = Path(__file__).parent
+        
         cookie_files = [
-            '../cookies.txt',  # Parent directory (most likely location)
-            '../www.youtube.com_cookies.txt',
-            'cookies.txt',
-            'www.youtube.com_cookies.txt',
-            'youtube_cookies.txt',
+            script_dir / 'cookies.txt',  # App directory (where uploads go)
+            script_dir / 'www.youtube.com_cookies.txt',
+            Path('../cookies.txt'),  # Parent directory (for local dev)
+            Path('../www.youtube.com_cookies.txt'),
+            Path('cookies.txt'),  # Current directory
+            Path('www.youtube.com_cookies.txt'),
+            Path('youtube_cookies.txt'),
         ]
         
         for cookie_file in cookie_files:
@@ -94,11 +99,12 @@ class YouTubePipeline:
             if cookie_path.exists():
                 # Check if file is recent (less than 7 days old)
                 file_age_days = (time.time() - cookie_path.stat().st_mtime) / (24 * 3600)
+                abs_path = str(cookie_path.resolve())
                 if file_age_days > 7:
-                    logger.warning(f"Cookie file {cookie_file} is {file_age_days:.1f} days old. Consider updating it.")
+                    logger.warning(f"Cookie file {abs_path} is {file_age_days:.1f} days old. Consider updating it.")
                 else:
-                    logger.info(f"Using cookie file: {cookie_file} (age: {file_age_days:.1f} days)")
-                return str(cookie_path.resolve())  # Return absolute path
+                    logger.info(f"Using cookie file: {abs_path} (age: {file_age_days:.1f} days)")
+                return abs_path  # Return absolute path
         
         logger.info("No cookie file found. Age-restricted videos may fail.")
         return None

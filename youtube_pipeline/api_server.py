@@ -13,6 +13,7 @@ import threading
 import atexit
 from typing import Optional
 from functools import wraps
+from werkzeug.utils import secure_filename
 from pipeline import YouTubePipeline
 from queue_manager import QueueManager
 import secrets
@@ -20,6 +21,7 @@ import secrets
 # Get the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
+COOKIES_DIR = BASE_DIR  # Store cookies in the app directory
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 CORS(app)  # Enable CORS for API access
@@ -316,11 +318,108 @@ def get_queue_info():
 @login_required
 def status():
     """Get API status."""
+    # Check if cookies.txt exists
+    cookies_file = Path(COOKIES_DIR) / 'cookies.txt'
+    has_cookies = cookies_file.exists()
+    cookies_age = None
+    if has_cookies:
+        import time
+        cookies_age = (time.time() - cookies_file.stat().st_mtime) / (24 * 3600)  # Age in days
+    
     return jsonify({
         'status': 'running',
         'config_path': CONFIG_PATH,
-        'queue_length': queue_manager.get_queue_length()
+        'queue_length': queue_manager.get_queue_length(),
+        'has_cookies': has_cookies,
+        'cookies_age_days': round(cookies_age, 1) if cookies_age else None
     })
+
+
+@app.route('/api/upload-cookies', methods=['POST'])
+@login_required
+def upload_cookies():
+    """Upload cookies.txt file for YouTube authentication."""
+    try:
+        if 'cookies' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': 'No file provided. Please select a cookies.txt file.'
+            }), 400
+        
+        file = request.files['cookies']
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'error': 'No file selected'
+            }), 400
+        
+        # Validate filename
+        filename = secure_filename(file.filename)
+        if not filename.lower().endswith('.txt'):
+            return jsonify({
+                'success': False,
+                'error': 'File must be a .txt file'
+            }), 400
+        
+        # Save to cookies.txt in the app directory
+        cookies_path = Path(COOKIES_DIR) / 'cookies.txt'
+        file.save(str(cookies_path))
+        
+        # Verify the file was saved and has content
+        if not cookies_path.exists():
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save cookies file'
+            }), 500
+        
+        file_size = cookies_path.stat().st_size
+        if file_size == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Uploaded file is empty'
+            }), 400
+        
+        logger.info(f"Cookies file uploaded successfully: {cookies_path} ({file_size} bytes)")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cookies file uploaded successfully ({file_size} bytes)',
+            'file_size': file_size
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error uploading cookies: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': f'Error uploading cookies: {str(e)}'
+        }), 500
+
+
+@app.route('/api/cookies-status', methods=['GET'])
+@login_required
+def cookies_status():
+    """Get status of cookies.txt file."""
+    cookies_file = Path(COOKIES_DIR) / 'cookies.txt'
+    has_cookies = cookies_file.exists()
+    
+    result = {
+        'success': True,
+        'has_cookies': has_cookies
+    }
+    
+    if has_cookies:
+        import time
+        cookies_age = (time.time() - cookies_file.stat().st_mtime) / (24 * 3600)
+        file_size = cookies_file.stat().st_size
+        result.update({
+            'age_days': round(cookies_age, 1),
+            'file_size': file_size,
+            'is_recent': cookies_age < 7
+        })
+    
+    return jsonify(result), 200
 
 
 if __name__ == '__main__':

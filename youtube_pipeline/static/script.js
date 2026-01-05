@@ -19,11 +19,15 @@ const progressFill = document.getElementById('progress-fill');
 const progressText = document.getElementById('progress-text');
 const logOutput = document.getElementById('log-output');
 const clearLogBtn = document.getElementById('clear-log-btn');
+const cookiesFileInput = document.getElementById('cookies-file');
+const uploadCookiesBtn = document.getElementById('upload-cookies-btn');
+const cookiesStatusDiv = document.getElementById('cookies-status');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     checkStatus();
     setDefaultOutputDir();
+    checkCookiesStatus();
 });
 
 // Set default output directory
@@ -300,6 +304,79 @@ if (logoutBtn) {
         }
     });
 }
+
+// Check cookies status
+async function checkCookiesStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/cookies-status`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.has_cookies) {
+                const ageText = data.age_days < 7 
+                    ? `Uploaded ${data.age_days} days ago` 
+                    : `⚠️ Uploaded ${data.age_days} days ago (may be expired)`;
+                showCookiesStatus(`✅ Cookies file found. ${ageText}`, data.age_days < 7 ? 'success' : 'warning');
+            } else {
+                showCookiesStatus('⚠️ No cookies file uploaded. Age-restricted videos will fail.', 'warning');
+            }
+        }
+    } catch (error) {
+        console.error('Error checking cookies status:', error);
+    }
+}
+
+// Show cookies status message
+function showCookiesStatus(message, type = 'info') {
+    cookiesStatusDiv.textContent = message;
+    cookiesStatusDiv.className = `cookie-status show ${type}`;
+}
+
+// Upload cookies file
+uploadCookiesBtn.addEventListener('click', async () => {
+    if (!cookiesFileInput.files || cookiesFileInput.files.length === 0) {
+        showCookiesStatus('Please select a cookies.txt file first', 'error');
+        return;
+    }
+
+    const file = cookiesFileInput.files[0];
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+        showCookiesStatus('Error: File must be a .txt file', 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('cookies', file);
+
+    uploadCookiesBtn.disabled = true;
+    uploadCookiesBtn.textContent = 'Uploading...';
+    showCookiesStatus('Uploading cookies file...', 'info');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/upload-cookies`, {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showCookiesStatus(`✅ ${data.message}`, 'success');
+            addLog('success', `Cookies file uploaded successfully (${data.file_size} bytes)`);
+            // Refresh cookies status after a moment
+            setTimeout(checkCookiesStatus, 1000);
+        } else {
+            showCookiesStatus(`❌ Error: ${data.error}`, 'error');
+            addLog('error', `Failed to upload cookies: ${data.error}`);
+        }
+    } catch (error) {
+        showCookiesStatus(`❌ Upload failed: ${error.message}`, 'error');
+        addLog('error', `Cookies upload error: ${error.message}`);
+    } finally {
+        uploadCookiesBtn.disabled = false;
+        uploadCookiesBtn.textContent = 'Upload Cookies';
+        cookiesFileInput.value = ''; // Clear file input
+    }
+});
 
 // Note: Progress updates now come from real-time queue status polling via pollJobStatus()
 // The simulateProgress() function has been removed in favor of actual progress from the server

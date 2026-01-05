@@ -63,6 +63,22 @@
                     <strong>🔒 Cookie File Reminder:</strong> Make sure your cookie file (cookies.txt or www.youtube.com_cookies.txt) is up to date for age-restricted videos. Export fresh cookies from your browser if downloads fail.
                 </div>
 
+                <div class="form-group">
+                    <label for="cookies-file">Upload Cookies File (for age-restricted videos):</label>
+                    <div class="input-group">
+                        <input 
+                            type="file" 
+                            id="cookies-file" 
+                            accept=".txt"
+                            class="input-field"
+                            style="padding: 8px;"
+                        >
+                        <button id="upload-cookies-btn" class="btn btn-secondary">Upload Cookies</button>
+                    </div>
+                    <small class="help-text">Upload a fresh cookies.txt file exported from your browser to access age-restricted videos</small>
+                    <div id="cookies-status" class="cookie-status"></div>
+                </div>
+
                 <button id="process-btn" class="btn btn-primary">
                     <span id="btn-text">Process Song</span>
                     <span id="btn-spinner" class="spinner hidden"></span>
