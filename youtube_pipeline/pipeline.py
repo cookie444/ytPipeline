@@ -199,12 +199,11 @@ class YouTubePipeline:
         client_configs = [c for c in client_configs if c is not None]
         
         # Format strings to try (most permissive first)
+        # Use very simple selectors that should work with any video
         format_strings = [
-            None,  # No format - let yt-dlp auto-select
-            'best',  # Best available
-            'bestvideo*+bestaudio/best',  # Best video+audio combo
-            'bestaudio/best',  # Best audio or best
-            'worst',  # Worst as last resort
+            None,  # No format - let yt-dlp auto-select (most permissive)
+            'best',  # Simple best selector
+            'worst',  # Worst as fallback
         ]
         
         ydl_opts_base = {
@@ -228,6 +227,22 @@ class YouTubePipeline:
             ydl_opts_base['cookiefile'] = self.cookie_file
             logger.info(f"Using authentication cookies from: {self.cookie_file}")
         
+        # Simplify client configs - try fewer combinations to avoid long waits
+        # Start with web client (if cookies available) as it usually has most formats
+        # Then try default (no client restriction) which is most permissive
+        simplified_client_configs = []
+        if self.cookie_file:
+            simplified_client_configs.append({'player_client': ['web'], 'name': 'web'})
+        simplified_client_configs.append({'player_client': None, 'name': 'default'})
+        # Only add mobile clients if web/default fail
+        simplified_client_configs.extend([
+            {'player_client': ['ios'], 'name': 'ios'},
+            {'player_client': ['android'], 'name': 'android'},
+        ])
+        
+        # Use simplified configs
+        client_configs = simplified_client_configs
+        
         # Try each client/format combination until one works
         last_error = None
         for client_config in client_configs:
@@ -244,6 +259,7 @@ class YouTubePipeline:
                         }
                     
                     # Set format if specified
+                    # If None, don't set format at all - let yt-dlp use its default
                     if format_str is not None:
                         ydl_opts['format'] = format_str
                     
