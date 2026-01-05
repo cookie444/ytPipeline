@@ -156,13 +156,17 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
         try:
             audio_file = pipeline.download_audio(video_url, pipeline.temp_dir)
             if not audio_file:
-                raise Exception("Failed to download audio: No file returned")
+                raise Exception("Download failed: No audio file returned from download_audio. This may indicate the video has no audio or the download was interrupted.")
         except Exception as e:
             error_detail = str(e)
             logger.error(f"Download error details: {error_detail}")
+            # Log the full exception for debugging
+            import traceback
+            logger.error(f"Download exception traceback: {traceback.format_exc()}")
             # Check if it's an age-restricted or authentication issue
-            if any(keyword in error_detail.lower() for keyword in ['age', 'sign in', 'cookie', 'authentication']):
-                raise Exception(f"Download failed (authentication issue): {error_detail}. You may need to upload a fresh cookies.txt file.")
+            if any(keyword in error_detail.lower() for keyword in ['age', 'sign in', 'cookie', 'authentication', 'confirm your age']):
+                raise Exception(f"Download failed (authentication required): {error_detail}. For age-restricted videos, you need to upload a fresh cookies.txt file to the Render service.")
+            # Preserve the original error message
             raise Exception(f"Download failed: {error_detail}")
         
         progress_callback(50, "Separating audio into stems...")
