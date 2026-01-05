@@ -185,10 +185,13 @@ class YouTubePipeline:
         # Build yt-dlp options with cookie support
         # Use mobile clients to avoid YouTube's challenge solving requirements
         # Try multiple format strings in order of preference
+        # Start with most permissive and work down
         format_strings = [
-            'bestaudio/best',  # Most flexible - any audio or video with audio
-            'best',  # Just get the best available format
-            'worst',  # Fallback to worst if best fails (shouldn't happen but safer)
+            None,  # No format specified - let yt-dlp choose automatically (most permissive)
+            'best',  # Best available format
+            'bestvideo+bestaudio/best',  # Best video + audio combination
+            'bestaudio/best',  # Best audio or best with audio
+            'worst',  # Fallback to worst if all else fails
         ]
         
         ydl_opts_base = {
@@ -223,14 +226,18 @@ class YouTubePipeline:
         for format_str in format_strings:
             try:
                 ydl_opts = ydl_opts_base.copy()
-                ydl_opts['format'] = format_str
-                logger.info(f"Trying format string: {format_str}")
+                if format_str is not None:
+                    ydl_opts['format'] = format_str
+                    logger.info(f"Trying format string: {format_str}")
+                else:
+                    logger.info("Trying with no format specified (let yt-dlp auto-select)")
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(video_url, download=True)
                     title = info.get('title', 'audio')
                     self.video_title = title  # Store for ZIP naming
-                    logger.info(f"Successfully extracted info with format '{format_str}'. Title: {title}")
+                    format_desc = format_str if format_str else 'auto'
+                    logger.info(f"Successfully extracted info with format '{format_desc}'. Title: {title}")
                     
                     # Wait for postprocessor
                     import time
@@ -258,8 +265,9 @@ class YouTubePipeline:
                     
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
-                if 'format is not available' in error_msg.lower():
-                    logger.warning(f"Format '{format_str}' not available, trying next format...")
+                format_desc = format_str if format_str else 'auto'
+                if 'format is not available' in error_msg.lower() or 'requested format' in error_msg.lower():
+                    logger.warning(f"Format '{format_desc}' not available, trying next format...")
                     last_error = e
                     continue  # Try next format
                 else:
@@ -270,7 +278,8 @@ class YouTubePipeline:
                 if 'Postprocessor failed' in str(e) or 'No audio file found' in str(e):
                     raise  # Re-raise these
                 # Otherwise, try next format
-                logger.warning(f"Error with format '{format_str}': {e}, trying next format...")
+                format_desc = format_str if format_str else 'auto'
+                logger.warning(f"Error with format '{format_desc}': {e}, trying next format...")
                 last_error = e
                 continue
         
