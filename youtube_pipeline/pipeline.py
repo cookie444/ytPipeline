@@ -208,10 +208,12 @@ class YouTubePipeline:
             logger.info(f"Using authentication cookies from: {self.cookie_file}")
         
         try:
+            logger.info(f"Attempting download with yt-dlp. Cookie file: {self.cookie_file or 'None'}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
                 title = info.get('title', 'audio')
                 self.video_title = title  # Store for ZIP naming
+                logger.info(f"Successfully extracted info. Title: {title}")
                 
                 # Clean title for filename matching
                 import re
@@ -219,7 +221,7 @@ class YouTubePipeline:
                 
                 # Wait a moment for postprocessor to finish
                 import time
-                time.sleep(1)
+                time.sleep(2)  # Increased wait time for postprocessing
                 
                 # Find the downloaded/converted WAV file
                 wav_files = list(output_path.glob("*.wav"))
@@ -234,19 +236,21 @@ class YouTubePipeline:
                     logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
                     logger.warning("Postprocessor may have failed. Trying to convert manually...")
                     # Could add manual conversion here if needed
-                    return None
+                    raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
                 
                 # Check what files were actually downloaded
                 all_files = list(output_path.glob("*"))
-                logger.error(f"No audio file found. Downloaded files: {[f.name for f in all_files]}")
+                error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
+                logger.error(error_detail)
                 logger.error("This video may not have audio available, or download failed.")
-                return None
+                raise Exception(f"Download failed: {error_detail}")
                 
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error downloading audio: {error_msg}")
             import traceback
-            logger.debug(f"Full traceback: {traceback.format_exc()}")
+            full_traceback = traceback.format_exc()
+            logger.error(f"Full traceback: {full_traceback}")
             
             # If age-restricted or sign-in required, try with different clients
             if any(keyword in error_msg.lower() for keyword in ['age', 'sign in', 'inappropriate', 'confirm your age']):
@@ -290,19 +294,23 @@ class YouTubePipeline:
                 
                 # If all methods failed
                 logger.error("All download methods failed for age-restricted video.")
+                error_detail = "Age-restricted video: All download methods failed"
                 if self.cookie_file:
+                    error_detail += f". Cookie file used: {self.cookie_file}"
                     logger.warning(f"Cookie file was used: {self.cookie_file}")
                     logger.warning("Possible issues:")
                     logger.warning("  1. Cookies may be expired - export fresh cookies from browser")
                     logger.warning("  2. Cookies may not include YouTube domain - ensure cookies.txt has .youtube.com cookies")
                     logger.warning("  3. Video may require additional verification")
                 else:
+                    error_detail += ". No cookie file found"
                     logger.warning("No cookie file found. Export cookies from your browser:")
                     logger.warning("  - Install 'Get cookies.txt LOCALLY' extension")
                     logger.warning("  - Export cookies from YouTube while logged in")
                     logger.warning("  - Save as 'cookies.txt' in the project directory")
             
-            return None
+            # Raise exception with detailed error message
+            raise Exception(f"Download failed: {error_msg}. {error_detail}")
     
     def separate_audio(self, audio_path: Path, output_dir: Path) -> Dict[str, Path]:
         """

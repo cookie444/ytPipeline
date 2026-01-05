@@ -153,9 +153,17 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
             raise Exception("Failed to find video on YouTube")
         
         progress_callback(30, "Downloading audio...")
-        audio_file = pipeline.download_audio(video_url, pipeline.temp_dir)
-        if not audio_file:
-            raise Exception("Failed to download audio")
+        try:
+            audio_file = pipeline.download_audio(video_url, pipeline.temp_dir)
+            if not audio_file:
+                raise Exception("Failed to download audio: No file returned")
+        except Exception as e:
+            error_detail = str(e)
+            logger.error(f"Download error details: {error_detail}")
+            # Check if it's an age-restricted or authentication issue
+            if any(keyword in error_detail.lower() for keyword in ['age', 'sign in', 'cookie', 'authentication']):
+                raise Exception(f"Download failed (authentication issue): {error_detail}. You may need to upload a fresh cookies.txt file.")
+            raise Exception(f"Download failed: {error_detail}")
         
         progress_callback(50, "Separating audio into stems...")
         stems_dir = pipeline.temp_dir / "stems"
