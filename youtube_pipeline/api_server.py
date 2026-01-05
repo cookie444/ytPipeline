@@ -193,8 +193,15 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
             
     except Exception as e:
         error_msg = str(e)
+        import traceback
+        full_traceback = traceback.format_exc()
         logger.error(f"Pipeline job error: {error_msg}")
-        raise Exception(f"Pipeline error: {error_msg}")
+        logger.error(f"Full traceback: {full_traceback}")
+        # Preserve the original error message (don't add "Pipeline error:" prefix if it's already there)
+        if error_msg.startswith("Pipeline error:"):
+            raise Exception(error_msg)
+        else:
+            raise Exception(f"Pipeline error: {error_msg}")
 
 
 @app.route('/process', methods=['POST'])

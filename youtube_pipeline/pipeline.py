@@ -247,10 +247,20 @@ class YouTubePipeline:
                 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Error downloading audio: {error_msg}")
+            error_type = type(e).__name__
+            logger.error(f"Error downloading audio ({error_type}): {error_msg}")
             import traceback
             full_traceback = traceback.format_exc()
             logger.error(f"Full traceback: {full_traceback}")
+            
+            # Extract more details from yt-dlp errors
+            if hasattr(e, 'msg'):
+                error_msg = f"{error_type}: {e.msg}"
+            elif hasattr(e, 'args') and e.args:
+                error_msg = f"{error_type}: {e.args[0]}"
+            
+            # Re-raise with detailed message - this will be caught by the retry logic below
+            raise Exception(f"Download error: {error_msg}")
             
             # If age-restricted or sign-in required, try with different clients
             if any(keyword in error_msg.lower() for keyword in ['age', 'sign in', 'inappropriate', 'confirm your age']):
@@ -279,15 +289,17 @@ class YouTubePipeline:
                         if self.cookie_file:
                             ydl_opts_retry['cookiefile'] = self.cookie_file
                         
-                            with yt_dlp.YoutubeDL(ydl_opts_retry) as ydl:
-                                info = ydl.extract_info(video_url, download=True)
-                                title = info.get('title', 'audio')
-                                self.video_title = title  # Store for ZIP naming
-                                wav_files = list(output_path.glob("*.wav"))
-                                if wav_files:
-                                    wav_file = wav_files[0]
-                                    logger.info(f"Successfully downloaded audio to: {wav_file}")
-                                    return wav_file
+                        with yt_dlp.YoutubeDL(ydl_opts_retry) as ydl:
+                            info = ydl.extract_info(video_url, download=True)
+                            title = info.get('title', 'audio')
+                            self.video_title = title  # Store for ZIP naming
+                            import time
+                            time.sleep(2)
+                            wav_files = list(output_path.glob("*.wav"))
+                            if wav_files:
+                                wav_file = wav_files[0]
+                                logger.info(f"Successfully downloaded audio to: {wav_file}")
+                                return wav_file
                     except Exception as e2:
                         logger.debug(f"Client {clients} failed: {e2}")
                         continue
