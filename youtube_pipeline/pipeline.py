@@ -172,6 +172,7 @@ class YouTubePipeline:
         """
         Download audio from YouTube in highest quality.
         Handles age-restricted videos with cookie authentication.
+        Uses format listing to find available formats before attempting download.
         
         Args:
             video_url: YouTube video URL
@@ -182,29 +183,29 @@ class YouTubePipeline:
         """
         logger.info(f"Downloading audio from: {video_url}")
         
-        # Build yt-dlp options with cookie support
-        # Try different client/format combinations
-        # Some videos work better with web client, others with mobile
-        client_configs = [
-            # Try web client first (has more format options) if cookies are available
-            {'player_client': ['web'], 'name': 'web'} if self.cookie_file else None,
-            # Then try mobile clients
-            {'player_client': ['ios'], 'name': 'ios'},
-            {'player_client': ['android'], 'name': 'android'},
-            {'player_client': ['ios', 'android'], 'name': 'ios+android'},
-            # Finally try without player_client restriction
-            {'player_client': None, 'name': 'default'},
-        ]
-        # Filter out None entries
-        client_configs = [c for c in client_configs if c is not None]
-        
-        # Format strings to try (most permissive first)
-        # Use very simple selectors that should work with any video
-        format_strings = [
-            None,  # No format - let yt-dlp auto-select (most permissive)
-            'best',  # Simple best selector
-            'worst',  # Worst as fallback
-        ]
+        # Build client configurations
+        # IMPORTANT: Only web and tv clients support cookies properly
+        # Mobile clients (ios, android, mweb) don't support cookies
+        if self.cookie_file:
+            # If we have cookies, prioritize clients that support them
+            client_configs = [
+                {'player_client': ['web'], 'name': 'web', 'use_cookies': True},
+                {'player_client': ['tv', 'web'], 'name': 'tv+web', 'use_cookies': True},
+                {'player_client': None, 'name': 'default', 'use_cookies': True},  # Default may use cookies
+                # Try mobile clients without cookies as fallback
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
+                {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
+                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
+            ]
+        else:
+            # No cookies - try all clients
+            client_configs = [
+                {'player_client': None, 'name': 'default', 'use_cookies': False},
+                {'player_client': ['web'], 'name': 'web', 'use_cookies': False},
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
+                {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
+                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
+            ]
         
         ydl_opts_base = {
             'outtmpl': str(output_path / '%(title)s.%(ext)s'),
@@ -215,118 +216,89 @@ class YouTubePipeline:
             }],
             'quiet': False,
             'no_warnings': False,
-            'age_limit': None,  # Don't restrict by age
-            # Additional options
+            'age_limit': None,
             'writesubtitles': False,
             'writeautomaticsub': False,
             'skip_download': False,
+            'extractor_retries': 3,
+            'fragment_retries': 3,
         }
         
-        # Add cookie file if found
-        if self.cookie_file:
-            ydl_opts_base['cookiefile'] = self.cookie_file
-            logger.info(f"Using authentication cookies from: {self.cookie_file}")
-        
-        # Simplify client configs - try fewer combinations to avoid long waits
-        # Start with web client (if cookies available) as it usually has most formats
-        # Then try default (no client restriction) which is most permissive
-        simplified_client_configs = []
-        if self.cookie_file:
-            simplified_client_configs.append({'player_client': ['web'], 'name': 'web'})
-        simplified_client_configs.append({'player_client': None, 'name': 'default'})
-        # Only add mobile clients if web/default fail
-        simplified_client_configs.extend([
-            {'player_client': ['ios'], 'name': 'ios'},
-            {'player_client': ['android'], 'name': 'android'},
-        ])
-        
-        # Use simplified configs
-        client_configs = simplified_client_configs
-        
-        # Try each client/format combination until one works
+        # Try each client configuration
         last_error = None
         for client_config in client_configs:
-            for format_str in format_strings:
-                try:
-                    ydl_opts = ydl_opts_base.copy()
-                    
-                    # Set player_client if specified
-                    if client_config['player_client'] is not None:
-                        ydl_opts['extractor_args'] = {
-                            'youtube': {
-                                'player_client': client_config['player_client'],
-                            }
-                        }
-                    
-                    # Set format if specified
-                    # If None, don't set format at all - let yt-dlp use its default
-                    if format_str is not None:
-                        ydl_opts['format'] = format_str
-                    
-                    client_name = client_config['name']
-                    format_desc = format_str if format_str else 'auto'
-                    logger.info(f"Trying client '{client_name}' with format '{format_desc}'")
+            try:
+                ydl_opts = ydl_opts_base.copy()
                 
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(video_url, download=True)
-                        title = info.get('title', 'audio')
-                        self.video_title = title  # Store for ZIP naming
-                        logger.info(f"Successfully extracted info with client '{client_name}' format '{format_desc}'. Title: {title}")
+                # Only add cookies if this client supports them
+                if client_config['use_cookies'] and self.cookie_file:
+                    ydl_opts['cookiefile'] = self.cookie_file
+                    logger.info(f"Using authentication cookies from: {self.cookie_file}")
+                
+                # Set player_client if specified
+                if client_config['player_client'] is not None:
+                    ydl_opts['extractor_args'] = {
+                        'youtube': {
+                            'player_client': client_config['player_client'],
+                        }
+                    }
+                
+                client_name = client_config['name']
+                cookie_status = "with cookies" if (client_config['use_cookies'] and self.cookie_file) else "without cookies"
+                logger.info(f"Trying client '{client_name}' {cookie_status} - letting yt-dlp auto-select format...")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # Don't specify any format - let yt-dlp automatically choose the best available
+                    # Extract info and download in one call
+                    info = ydl.extract_info(video_url, download=True)
+                    title = info.get('title', 'audio')
+                    self.video_title = title
+                    logger.info(f"Successfully extracted info with client '{client_name}'. Title: {title}")
                     
-                        # Wait for postprocessor
-                        import time
-                        time.sleep(2)
-                        
-                        # Find the downloaded/converted WAV file
-                        wav_files = list(output_path.glob("*.wav"))
-                        if wav_files:
-                            wav_file = wav_files[0]
-                            logger.info(f"Downloaded audio to: {wav_file}")
-                            return wav_file
-                        
-                        # If no WAV found, check for other audio formats
-                        audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
-                        if audio_files:
-                            logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
-                            logger.warning("Postprocessor may have failed. Trying to convert manually...")
-                            raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
-                        
-                        # Check what files were actually downloaded
-                        all_files = list(output_path.glob("*"))
-                        error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
-                        logger.error(error_detail)
-                        raise Exception(f"Download failed: {error_detail}")
-                        
-                except yt_dlp.utils.DownloadError as e:
-                    error_msg = str(e)
-                    if 'format is not available' in error_msg.lower() or 'requested format' in error_msg.lower():
-                        logger.warning(f"Client '{client_name}' format '{format_desc}' not available, trying next...")
-                        last_error = e
-                        continue  # Try next format/client combo
-                    else:
-                        # Different error - might be authentication or other issue
-                        # If it's not a format error, try next client/format combo
-                        if 'age' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
-                            logger.warning(f"Authentication issue with client '{client_name}', trying next...")
-                            last_error = e
-                            continue
-                        # For other errors, try next combo
-                        logger.warning(f"Error with client '{client_name}' format '{format_desc}': {error_msg[:100]}, trying next...")
-                        last_error = e
-                        continue
-                except Exception as e:
-                    # If we get here and it's not a format error, check if we got the file
-                    if 'Postprocessor failed' in str(e) or 'No audio file found' in str(e):
-                        raise  # Re-raise these
-                    # Otherwise, try next combo
-                    logger.warning(f"Error with client '{client_name}' format '{format_desc}': {e}, trying next...")
+                    # Wait for postprocessor
+                    import time
+                    time.sleep(2)
+                    
+                    # Find the downloaded/converted WAV file
+                    wav_files = list(output_path.glob("*.wav"))
+                    if wav_files:
+                        wav_file = wav_files[0]
+                        logger.info(f"Successfully downloaded audio to: {wav_file}")
+                        return wav_file
+                    
+                    # If no WAV found, check for other audio formats
+                    audio_files = list(output_path.glob("*.m4a")) + list(output_path.glob("*.mp3")) + list(output_path.glob("*.ogg"))
+                    if audio_files:
+                        logger.warning(f"Found audio file but not WAV: {audio_files[0]}")
+                        logger.warning("Postprocessor may have failed. Trying to convert manually...")
+                        raise Exception(f"Postprocessor failed: Found {audio_files[0].suffix} but expected WAV")
+                    
+                    # Check what files were actually downloaded
+                    all_files = list(output_path.glob("*"))
+                    error_detail = f"No audio file found. Downloaded files: {[f.name for f in all_files] if all_files else 'None'}"
+                    logger.error(error_detail)
+                    raise Exception(f"Download failed: {error_detail}")
+                    
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e)
+                if 'age' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
+                    logger.warning(f"Authentication issue with client '{client_name}', trying next...")
                     last_error = e
                     continue
+                logger.warning(f"Error with client '{client_name}': {error_msg[:200]}, trying next...")
+                last_error = e
+                continue
+            except Exception as e:
+                error_msg = str(e)
+                if 'Postprocessor failed' in error_msg or 'No audio file found' in error_msg:
+                    raise
+                logger.warning(f"Error with client '{client_name}': {error_msg[:200]}, trying next...")
+                last_error = e
+                continue
         
-        # If all formats failed, raise the last error
+        # If all clients failed, raise the last error
         if last_error:
             error_msg = str(last_error)
-            # Check if it's an age-restricted video issue
             if any(keyword in error_msg.lower() for keyword in ['age', 'sign in', 'inappropriate', 'confirm your age', 'bot']):
                 error_detail = "Age-restricted video or authentication required"
                 if self.cookie_file:
@@ -334,8 +306,8 @@ class YouTubePipeline:
                 else:
                     error_detail += ". No cookie file found - please upload cookies.txt"
                 raise Exception(f"Download failed: {error_detail}. Original error: {error_msg}")
-            raise Exception(f"All format options failed. Last error: {error_msg}")
-        raise Exception("All format options exhausted")
+            raise Exception(f"All client/format options failed. Last error: {error_msg}")
+        raise Exception("All download options exhausted")
     
     def separate_audio(self, audio_path: Path, output_dir: Path) -> Dict[str, Path]:
         """
