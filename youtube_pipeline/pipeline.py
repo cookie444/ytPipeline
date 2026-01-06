@@ -31,8 +31,14 @@ logger = logging.getLogger(__name__)
 class YouTubePipeline:
     """Main pipeline class for YouTube audio processing."""
     
-    def __init__(self, config_path: str = "config.json", output_dir: Optional[str] = None):
-        """Initialize pipeline with configuration."""
+    def __init__(self, config_path: str = "config.json", output_dir: Optional[str] = None, cookie_file: Optional[str] = None):
+        """Initialize pipeline with configuration.
+        
+        Args:
+            config_path: Path to configuration JSON file
+            output_dir: Directory to save output files
+            cookie_file: Optional explicit path to cookies.txt file
+        """
         self.config = self._load_config(config_path)
         self.temp_dir = Path(tempfile.mkdtemp(prefix="youtube_pipeline_"))
         logger.info(f"Using temporary directory: {self.temp_dir}")
@@ -48,7 +54,15 @@ class YouTubePipeline:
             self.output_dir = self.temp_dir
             logger.info(f"No output directory specified, using temp directory")
         
-        self.cookie_file = self._find_cookie_file()
+        # Find or use provided cookie file
+        if cookie_file and Path(cookie_file).exists():
+            self.cookie_file = str(Path(cookie_file).resolve())
+            logger.info(f"Using provided cookie file: {self.cookie_file}")
+        else:
+            self.cookie_file = self._find_cookie_file()
+            if self.cookie_file:
+                logger.info(f"Auto-detected cookie file: {self.cookie_file}")
+        
         self.video_title = None  # Will be set during download
         
     def _load_config(self, config_path: str) -> Dict:

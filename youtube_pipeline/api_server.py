@@ -147,7 +147,17 @@ def process_pipeline_job(query: str, output_dir: Optional[str],
     """
     try:
         progress_callback(10, "Initializing pipeline...")
-        pipeline = YouTubePipeline(config_path=CONFIG_PATH, output_dir=output_dir)
+        
+        # Explicitly check for cookies file and pass it to pipeline
+        cookies_file = Path(COOKIES_DIR) / 'cookies.txt'
+        cookie_path = str(cookies_file) if cookies_file.exists() else None
+        
+        if cookie_path:
+            logger.info(f"Found cookie file: {cookie_path} ({cookies_file.stat().st_size} bytes)")
+        else:
+            logger.warning("No cookie file found at {}/cookies.txt - age-restricted videos may fail".format(COOKIES_DIR))
+        
+        pipeline = YouTubePipeline(config_path=CONFIG_PATH, output_dir=output_dir, cookie_file=cookie_path)
         
         progress_callback(20, "Searching YouTube...")
         video_url = pipeline.search_youtube(query)
