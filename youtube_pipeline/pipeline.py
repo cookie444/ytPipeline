@@ -56,12 +56,14 @@ class YouTubePipeline:
         
         # Find or use provided cookie file
         if cookie_file and Path(cookie_file).exists():
-            self.cookie_file = str(Path(cookie_file).resolve())
-            logger.info(f"Using provided cookie file: {self.cookie_file}")
+            cookie_path = Path(cookie_file).resolve()
+            self.cookie_file = str(cookie_path)
+            logger.info(f"Using provided cookie file: {self.cookie_file} (exists: {cookie_path.exists()}, size: {cookie_path.stat().st_size if cookie_path.exists() else 0} bytes)")
         else:
             self.cookie_file = self._find_cookie_file()
             if self.cookie_file:
-                logger.info(f"Auto-detected cookie file: {self.cookie_file}")
+                cookie_path = Path(self.cookie_file)
+                logger.info(f"Auto-detected cookie file: {self.cookie_file} (exists: {cookie_path.exists()}, size: {cookie_path.stat().st_size if cookie_path.exists() else 0} bytes)")
         
         self.video_title = None  # Will be set during download
         
