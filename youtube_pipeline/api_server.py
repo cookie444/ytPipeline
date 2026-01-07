@@ -373,7 +373,22 @@ def upload_cookies():
         
         # Save to cookies.txt in the app directory
         cookies_path = Path(COOKIES_DIR) / 'cookies.txt'
-        file.save(str(cookies_path))
+        
+        # Ensure directory exists
+        cookies_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the file
+        try:
+            file.save(str(cookies_path))
+            # Ensure file permissions allow reading
+            cookies_path.chmod(0o644)
+            logger.info(f"Cookies file saved to: {cookies_path} (absolute: {cookies_path.resolve()})")
+        except Exception as e:
+            logger.error(f"Error saving cookies file: {e}")
+            return jsonify({
+                'success': False,
+                'error': f'Failed to save cookies file: {str(e)}'
+            }), 500
         
         # Verify the file was saved and has content
         if not cookies_path.exists():
@@ -389,7 +404,25 @@ def upload_cookies():
                 'error': 'Uploaded file is empty'
             }), 400
         
-        logger.info(f"Cookies file uploaded successfully: {cookies_path} ({file_size} bytes)")
+        # Validate cookie file format
+        try:
+            with open(cookies_path, 'r', encoding='utf-8', errors='ignore') as f:
+                first_lines = f.read(5000)  # Read first 5KB
+                is_netscape = first_lines.strip().startswith('# Netscape')
+                has_youtube = 'youtube.com' in first_lines or '.youtube.com' in first_lines
+                
+                logger.info(f"Cookie file validation: Netscape format={is_netscape}, Has YouTube={has_youtube}")
+                
+                if not has_youtube:
+                    logger.warning("Cookie file does not appear to contain YouTube cookies")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Cookie file does not appear to contain YouTube cookies. Please export cookies from your browser for youtube.com'
+                    }), 400
+        except Exception as e:
+            logger.warning(f"Could not validate cookie file format: {e}")
+        
+        logger.info(f"Cookies file uploaded successfully: {cookies_path.resolve()} ({file_size} bytes)")
         
         return jsonify({
             'success': True,

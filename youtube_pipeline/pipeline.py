@@ -246,8 +246,29 @@ class YouTubePipeline:
                 
                 # Only add cookies if this client supports them
                 if client_config['use_cookies'] and self.cookie_file:
-                    ydl_opts['cookiefile'] = self.cookie_file
-                    logger.info(f"Using authentication cookies from: {self.cookie_file}")
+                    cookie_path = Path(self.cookie_file)
+                    if not cookie_path.exists():
+                        logger.error(f"Cookie file not found at: {self.cookie_file}")
+                        raise Exception(f"Cookie file not found: {self.cookie_file}")
+                    
+                    # Verify cookie file is readable
+                    try:
+                        cookie_size = cookie_path.stat().st_size
+                        if cookie_size == 0:
+                            logger.error(f"Cookie file is empty: {self.cookie_file}")
+                            raise Exception(f"Cookie file is empty: {self.cookie_file}")
+                        
+                        # Read first few lines to verify format
+                        with open(cookie_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            first_lines = ''.join(f.readlines()[:5])
+                            logger.info(f"Cookie file preview (first 5 lines):\n{first_lines[:200]}")
+                        
+                        # Use absolute path
+                        ydl_opts['cookiefile'] = str(cookie_path.resolve())
+                        logger.info(f"Using authentication cookies from: {self.cookie_file} (absolute: {ydl_opts['cookiefile']}, size: {cookie_size} bytes)")
+                    except Exception as e:
+                        logger.error(f"Error reading cookie file {self.cookie_file}: {e}")
+                        raise
                 
                 # Set player_client if specified
                 if client_config['player_client'] is not None:
@@ -296,7 +317,9 @@ class YouTubePipeline:
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
                 if 'age' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
-                    logger.warning(f"Authentication issue with client '{client_name}', trying next...")
+                    cookie_info = f" with cookies from {self.cookie_file}" if (client_config['use_cookies'] and self.cookie_file) else " without cookies"
+                    logger.warning(f"Authentication issue with client '{client_name}'{cookie_info}")
+                    logger.warning(f"Error details: {error_msg[:500]}")
                     last_error = e
                     continue
                 logger.warning(f"Error with client '{client_name}': {error_msg[:200]}, trying next...")
