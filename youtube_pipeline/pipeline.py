@@ -272,17 +272,13 @@ class YouTubePipeline:
                     ydl_opts['extractor_args'] = {
                         'youtube': {
                             'player_client': client_config['player_client'],
-                            # Add skip options to avoid problematic endpoints
-                            'skip': ['webpage', 'hls'],
                         }
                     }
-                
-                # For mobile clients, add additional options to bypass detection
-                if client_config['player_client'] in [['android'], ['ios'], ['mweb']]:
-                    # Mobile clients benefit from these additional options
-                    ydl_opts['extractor_args']['youtube'].update({
-                        'player_skip': ['webpage'],  # Skip webpage parsing
-                    })
+                    
+                    # For mobile clients, add additional options to bypass detection
+                    if client_config['player_client'] in [['android'], ['ios'], ['mweb']]:
+                        # Mobile clients benefit from skipping webpage parsing
+                        ydl_opts['extractor_args']['youtube']['player_skip'] = ['webpage']
                 
                 client_name = client_config['name']
                 cookie_status = "with cookies" if (client_config['use_cookies'] and self.cookie_file) else "without cookies"
