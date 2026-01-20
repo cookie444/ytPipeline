@@ -226,12 +226,24 @@ class YouTubePipeline:
             'writesubtitles': False,
             'writeautomaticsub': False,
             'skip_download': False,
-            'extractor_retries': 3,
-            'fragment_retries': 3,
+            'extractor_retries': 5,  # Increased retries
+            'fragment_retries': 5,  # Increased retries
+            'retries': 5,  # General retries
             # Additional options to help with bot detection
             'nocheckcertificate': False,
             'prefer_insecure': False,
-            'user_agent': None,  # Let yt-dlp use default user agent
+            # Use a modern Chrome user agent
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
+            # Add headers to make requests look more legitimate
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            },
         }
         
         # Try each client configuration
@@ -240,8 +252,9 @@ class YouTubePipeline:
             try:
                 ydl_opts = ydl_opts_base.copy()
                 
-                # Only add cookies if this client supports them
-                if client_config['use_cookies'] and self.cookie_file:
+                # ALWAYS try to use cookies if available, even with mobile clients
+                # yt-dlp can use cookies with mobile clients, it just doesn't advertise it
+                if self.cookie_file:
                     ydl_opts['cookiefile'] = self.cookie_file
                     # Verify cookie file exists and is readable
                     cookie_path = Path(self.cookie_file)
@@ -253,18 +266,23 @@ class YouTubePipeline:
                         # Add additional cookie-related options
                         ydl_opts['noplaylist'] = True  # Don't download playlists
                         ydl_opts['extract_flat'] = False  # Extract full info
-                        # Add User-Agent to help with bot detection (match browser that exported cookies)
-                        ydl_opts['user_agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                        # Add referer to make requests look more legitimate
-                        ydl_opts['referer'] = 'https://www.youtube.com/'
                 
                 # Set player_client if specified
                 if client_config['player_client'] is not None:
                     ydl_opts['extractor_args'] = {
                         'youtube': {
                             'player_client': client_config['player_client'],
+                            # Add skip options to avoid problematic endpoints
+                            'skip': ['webpage', 'hls'],
                         }
                     }
+                
+                # For mobile clients, add additional options to bypass detection
+                if client_config['player_client'] in [['android'], ['ios'], ['mweb']]:
+                    # Mobile clients benefit from these additional options
+                    ydl_opts['extractor_args']['youtube'].update({
+                        'player_skip': ['webpage'],  # Skip webpage parsing
+                    })
                 
                 client_name = client_config['name']
                 cookie_status = "with cookies" if (client_config['use_cookies'] and self.cookie_file) else "without cookies"
@@ -305,11 +323,17 @@ class YouTubePipeline:
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
                 if 'age' in error_msg.lower() or 'sign in' in error_msg.lower() or 'bot' in error_msg.lower():
-                    logger.warning(f"Authentication issue with client '{client_name}', trying next...")
+                    logger.warning(f"Authentication issue with client '{client_name}': {error_msg[:150]}")
+                    logger.warning(f"Trying next client...")
                     last_error = e
+                    # Add a small delay between retries to avoid rate limiting
+                    import time
+                    time.sleep(1)
                     continue
                 logger.warning(f"Error with client '{client_name}': {error_msg[:200]}, trying next...")
                 last_error = e
+                import time
+                time.sleep(0.5)  # Small delay between retries
                 continue
             except Exception as e:
                 error_msg = str(e)
