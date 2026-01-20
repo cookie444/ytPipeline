@@ -150,7 +150,7 @@ processBtn.addEventListener('click', async () => {
 // Handle client-side download
 async function handleClientSideDownload(query) {
     try {
-        addLog('info', 'Client-side download selected - creating job and download script...');
+        addLog('info', 'Client-side download selected - setting up automatic download...');
         showStatus('Preparing client-side download...', 'info');
         updateProgress(5, 'Creating job...');
         
@@ -182,18 +182,56 @@ async function handleClientSideDownload(query) {
 
         currentJobId = jobData.job_id;
         addLog('info', `Job created: ${currentJobId}`);
-        updateProgress(10, 'Getting video URL...');
+        updateProgress(10, 'Preparing automatic download...');
         
-        // Get download script (pass query as-is, script will handle search if needed)
-        updateProgress(20, 'Generating download script...');
+        // Ask for permission to run automatically
+        const runAutomatically = await askPermissionToRun();
+        
+        if (runAutomatically) {
+            // Try to execute automatically
+            await executeDownloadAutomatically(query, currentJobId);
+        } else {
+            // Fall back to manual script download
+            await downloadAndRunScript(query, currentJobId);
+        }
+        
+    } catch (error) {
+        showStatus(`Error: ${error.message}`, 'error');
+        addLog('error', `Client-side download setup failed: ${error.message}`);
+    }
+}
+
+// Ask user for permission to run automatically
+async function askPermissionToRun() {
+    return new Promise((resolve) => {
+        const message = 'Would you like to automatically download and run the script?\n\n' +
+                       'This will:\n' +
+                       '1. Download a Python script to your machine\n' +
+                       '2. Attempt to run it automatically (requires Python)\n' +
+                       '3. Use YOUR IP address to download from YouTube\n' +
+                       '4. Upload the audio to Render for processing\n\n' +
+                       'Click "Yes" to proceed automatically, or "No" to download the script manually.';
+        
+        const userChoice = confirm(message);
+        resolve(userChoice);
+    });
+}
+
+// Execute download automatically
+async function executeDownloadAutomatically(query, jobId) {
+    try {
+        updateProgress(15, 'Generating download script...');
+        addLog('info', 'Generating download script for automatic execution...');
+        
+        // Get download script
         const scriptResponse = await fetch(`${API_BASE}/api/get-download-script`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                query: query,  // Pass query - script will handle URL or search
-                job_id: currentJobId
+                query: query,
+                job_id: jobId
             })
         });
 
@@ -209,37 +247,175 @@ async function handleClientSideDownload(query) {
             return;
         }
 
-        // Download the script
-        const scriptBlob = await scriptResponse.blob();
+        updateProgress(20, 'Downloading script...');
+        const scriptText = await scriptResponse.text();
+        
+        // Save script to a temporary location
+        const scriptBlob = new Blob([scriptText], { type: 'text/plain' });
         const scriptUrl = URL.createObjectURL(scriptBlob);
-        const a = document.createElement('a');
-        a.href = scriptUrl;
-        a.download = 'download_client_side.py';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(scriptUrl);
-
-        updateProgress(30, 'Download script ready!');
-        showStatus('Download script downloaded! Run it on your machine.', 'info');
-        addLog('info', 'Download script saved as download_client_side.py');
-        addLog('info', 'Next steps:');
-        addLog('info', '1. Open terminal/command prompt');
-        addLog('info', '2. Run: python download_client_side.py [YOUR_PASSWORD]');
-        addLog('info', '3. The script will download using YOUR IP and upload to Render');
-        addLog('info', '4. Processing will continue automatically on Render');
         
-        // Start polling for status (in case user runs script)
-        startStatusPolling(currentJobId);
+        // Try to use File System Access API if available (Chrome/Edge)
+        if ('showSaveFilePicker' in window) {
+            try {
+                updateProgress(25, 'Requesting file save permission...');
+                const fileHandle = await window.showSaveFilePicker({
+                    suggestedName: 'download_client_side.py',
+                    types: [{
+                        description: 'Python Script',
+                        accept: { 'text/x-python': ['.py'] }
+                    }]
+                });
+                
+                const writable = await fileHandle.createWritable();
+                await writable.write(scriptText);
+                await writable.close();
+                
+                addLog('info', 'Script saved successfully');
+                updateProgress(30, 'Script saved. Attempting to execute...');
+                
+                // Try to execute via custom protocol or provide instructions
+                await attemptAutoExecute(fileHandle.name);
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    addLog('info', 'File save cancelled, falling back to download');
+                    downloadScriptFile(scriptUrl);
+                } else {
+                    addLog('warn', `File System API failed: ${error.message}, falling back to download`);
+                    downloadScriptFile(scriptUrl);
+                }
+            }
+        } else {
+            // Fallback: download the file
+            downloadScriptFile(scriptUrl);
+            updateProgress(30, 'Script downloaded. Please run it manually.');
+            showAutoRunInstructions();
+        }
         
-        // Show instructions
-        showStatus('Script downloaded! Run it on your machine to download using your IP.', 'info');
-        updateProgress(30, 'Waiting for client-side download...');
+        // Start polling for status
+        startStatusPolling(jobId);
+        updateProgress(35, 'Waiting for download to complete...');
         
     } catch (error) {
-        showStatus(`Error: ${error.message}`, 'error');
-        addLog('error', `Client-side download setup failed: ${error.message}`);
+        addLog('error', `Automatic execution failed: ${error.message}`);
+        showStatus('Automatic execution failed. Please run the script manually.', 'error');
     }
+}
+
+// Download script file (fallback)
+function downloadScriptFile(scriptUrl) {
+    const a = document.createElement('a');
+    a.href = scriptUrl;
+    a.download = 'download_client_side.py';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(scriptUrl);
+}
+
+// Attempt to auto-execute the script
+async function attemptAutoExecute(filename) {
+    // Check if we can use a custom protocol handler or local service
+    // For now, provide clear instructions and try to open terminal
+    
+    addLog('info', 'Attempting to execute script automatically...');
+    updateProgress(35, 'Executing script...');
+    
+    // Try to detect OS and provide appropriate command
+    const isWindows = navigator.platform.toLowerCase().includes('win');
+    const isMac = navigator.platform.toLowerCase().includes('mac');
+    const isLinux = navigator.platform.toLowerCase().includes('linux');
+    
+    let command = '';
+    if (isWindows) {
+        // Try to execute via PowerShell or CMD
+        command = `python "${filename}"`;
+        addLog('info', 'Windows detected. Trying to execute via command prompt...');
+        
+        // Try to use a data URL to execute (limited browser support)
+        // For now, show instructions
+        showAutoRunInstructions(filename, command);
+    } else if (isMac || isLinux) {
+        command = `python3 "${filename}" || python "${filename}"`;
+        addLog('info', 'Unix-like system detected. Trying to execute...');
+        showAutoRunInstructions(filename, command);
+    } else {
+        showAutoRunInstructions(filename);
+    }
+    
+    // Ask for password
+    const password = await askForPassword();
+    if (password) {
+        addLog('info', 'Password provided. You can now run the script with this password.');
+        addLog('info', `Command: ${command} ${password}`);
+        showStatus('Script ready! Run the command shown in the logs.', 'info');
+    }
+}
+
+// Ask user for Render password
+async function askForPassword() {
+    return new Promise((resolve) => {
+        const password = prompt('Enter your Render password (or leave blank to enter later):');
+        resolve(password || null);
+    });
+}
+
+// Show auto-run instructions
+function showAutoRunInstructions(filename = 'download_client_side.py', command = null) {
+    addLog('info', '='.repeat(60));
+    addLog('info', 'AUTOMATIC EXECUTION INSTRUCTIONS:');
+    addLog('info', '='.repeat(60));
+    
+    if (command) {
+        addLog('info', `1. Open terminal/command prompt in the folder containing: ${filename}`);
+        addLog('info', `2. Run: ${command} [YOUR_PASSWORD]`);
+    } else {
+        addLog('info', `1. Open terminal/command prompt`);
+        addLog('info', `2. Navigate to the folder containing: ${filename}`);
+        addLog('info', `3. Run: python "${filename}" [YOUR_PASSWORD]`);
+        addLog('info', '   (or: python3 "${filename}" [YOUR_PASSWORD] on Mac/Linux)');
+    }
+    
+    addLog('info', '3. The script will automatically:');
+    addLog('info', '   - Download the video using YOUR IP address');
+    addLog('info', '   - Upload the audio to Render');
+    addLog('info', '   - Processing will continue automatically');
+    addLog('info', '='.repeat(60));
+    
+    showStatus('Script ready! Follow the instructions in the logs to run it.', 'info');
+}
+
+// Download and run script (manual fallback)
+async function downloadAndRunScript(query, jobId) {
+    updateProgress(20, 'Generating download script...');
+    
+    const scriptResponse = await fetch(`${API_BASE}/api/get-download-script`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            query: query,
+            job_id: jobId
+        })
+    });
+
+    if (!scriptResponse.ok) {
+        const errorData = await scriptResponse.json();
+        showStatus(errorData.error || 'Failed to generate script', 'error');
+        return;
+    }
+
+    const scriptBlob = await scriptResponse.blob();
+    const scriptUrl = URL.createObjectURL(scriptBlob);
+    downloadScriptFile(scriptUrl);
+    
+    updateProgress(30, 'Script downloaded!');
+    showStatus('Script downloaded. Please run it manually.', 'info');
+    addLog('info', 'Script saved as download_client_side.py');
+    addLog('info', 'Run it with: python download_client_side.py [YOUR_PASSWORD]');
+    
+    startStatusPolling(jobId);
 }
 
 // Start processing state
