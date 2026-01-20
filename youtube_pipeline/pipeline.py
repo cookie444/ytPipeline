@@ -222,6 +222,10 @@ class YouTubePipeline:
             'skip_download': False,
             'extractor_retries': 3,
             'fragment_retries': 3,
+            # Additional options to help with bot detection
+            'nocheckcertificate': False,
+            'prefer_insecure': False,
+            'user_agent': None,  # Let yt-dlp use default user agent
         }
         
         # Try each client configuration
@@ -233,7 +237,16 @@ class YouTubePipeline:
                 # Only add cookies if this client supports them
                 if client_config['use_cookies'] and self.cookie_file:
                     ydl_opts['cookiefile'] = self.cookie_file
-                    logger.info(f"Using authentication cookies from: {self.cookie_file}")
+                    # Verify cookie file exists and is readable
+                    cookie_path = Path(self.cookie_file)
+                    if not cookie_path.exists():
+                        logger.warning(f"Cookie file not found: {self.cookie_file}, skipping cookies for this client")
+                    else:
+                        file_size = cookie_path.stat().st_size
+                        logger.info(f"Using authentication cookies from: {self.cookie_file} ({file_size} bytes)")
+                        # Add additional cookie-related options
+                        ydl_opts['noplaylist'] = True  # Don't download playlists
+                        ydl_opts['extract_flat'] = False  # Extract full info
                 
                 # Set player_client if specified
                 if client_config['player_client'] is not None:
