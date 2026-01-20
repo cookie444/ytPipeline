@@ -184,24 +184,22 @@ class YouTubePipeline:
         logger.info(f"Downloading audio from: {video_url}")
         
         # Build client configurations
-        # IMPORTANT: Try mobile clients WITH cookies first - they bypass bot detection better
-        # Even though mobile clients "don't support cookies", yt-dlp can still use them
+        # IMPORTANT: yt-dlp rejects cookies with mobile clients, so we need a hybrid approach
+        # Strategy: Try mobile clients WITHOUT cookies first (they bypass bot detection)
+        # Then try web/TV clients WITH cookies (for age-restricted content)
         if self.cookie_file:
-            # If we have cookies, try mobile clients first (they bypass bot detection)
-            # Then fall back to web/tv clients
+            # If we have cookies, try mobile clients first (no cookies - they bypass bot detection)
+            # Then try web/TV clients with cookies (for authentication)
             client_configs = [
-                # Mobile clients with cookies - best for bypassing bot detection
-                {'player_client': ['android'], 'name': 'android', 'use_cookies': True},
-                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': True},
-                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': True},
-                # Web/TV clients with cookies - may trigger bot detection
-                {'player_client': ['web'], 'name': 'web', 'use_cookies': True},
-                {'player_client': ['tv', 'web'], 'name': 'tv+web', 'use_cookies': True},
-                {'player_client': None, 'name': 'default', 'use_cookies': True},  # Default may use cookies
-                # Fallback: mobile clients without cookies
+                # Mobile clients WITHOUT cookies - best for bypassing bot detection
+                # yt-dlp will reject cookies with these, so don't try
                 {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
                 {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
                 {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
+                # Web/TV clients WITH cookies - for age-restricted content
+                {'player_client': ['web'], 'name': 'web', 'use_cookies': True},
+                {'player_client': ['tv', 'web'], 'name': 'tv+web', 'use_cookies': True},
+                {'player_client': None, 'name': 'default', 'use_cookies': True},  # Default with cookies
             ]
         else:
             # No cookies - try all clients
@@ -229,6 +227,9 @@ class YouTubePipeline:
             'extractor_retries': 5,  # Increased retries
             'fragment_retries': 5,  # Increased retries
             'retries': 5,  # General retries
+            # Format selection - be more flexible
+            'format': 'bestaudio/best',  # Prefer audio, fallback to best available
+            'format_sort': ['hasaud', 'quality', 'res', 'fps', 'codec:vp9', 'tbr', 'vbr', 'size', 'proto'],  # Smart format selection
             # Additional options to help with bot detection
             'nocheckcertificate': False,
             'prefer_insecure': False,
@@ -252,9 +253,9 @@ class YouTubePipeline:
             try:
                 ydl_opts = ydl_opts_base.copy()
                 
-                # ALWAYS try to use cookies if available, even with mobile clients
-                # yt-dlp can use cookies with mobile clients, it just doesn't advertise it
-                if self.cookie_file:
+                # Only use cookies with clients that support them (web/TV, not mobile)
+                # yt-dlp will reject cookies with mobile clients and skip them
+                if client_config['use_cookies'] and self.cookie_file:
                     ydl_opts['cookiefile'] = self.cookie_file
                     # Verify cookie file exists and is readable
                     cookie_path = Path(self.cookie_file)
@@ -274,11 +275,6 @@ class YouTubePipeline:
                             'player_client': client_config['player_client'],
                         }
                     }
-                    
-                    # For mobile clients, add additional options to bypass detection
-                    if client_config['player_client'] in [['android'], ['ios'], ['mweb']]:
-                        # Mobile clients benefit from skipping webpage parsing
-                        ydl_opts['extractor_args']['youtube']['player_skip'] = ['webpage']
                 
                 client_name = client_config['name']
                 cookie_status = "with cookies" if (client_config['use_cookies'] and self.cookie_file) else "without cookies"
