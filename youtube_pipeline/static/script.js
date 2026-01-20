@@ -10,6 +10,7 @@ let currentJobId = null;
 const youtubeInput = document.getElementById('youtube-input');
 const outputDirInput = document.getElementById('output-dir');
 const uploadToServerCheckbox = document.getElementById('upload-to-server');
+const clientSideDownloadCheckbox = document.getElementById('client-side-download');
 const browseBtn = document.getElementById('browse-btn');
 const processBtn = document.getElementById('process-btn');
 const btnText = document.getElementById('btn-text');
@@ -86,6 +87,13 @@ processBtn.addEventListener('click', async () => {
         return;
     }
 
+    // Check if client-side download is selected
+    if (clientSideDownloadCheckbox && clientSideDownloadCheckbox.checked) {
+        await handleClientSideDownload(query);
+        return;
+    }
+
+    // Normal server-side processing
     startProcessing();
     
     try {
@@ -138,6 +146,101 @@ processBtn.addEventListener('click', async () => {
         stopProcessing();
     }
 });
+
+// Handle client-side download
+async function handleClientSideDownload(query) {
+    try {
+        addLog('info', 'Client-side download selected - creating job and download script...');
+        showStatus('Preparing client-side download...', 'info');
+        updateProgress(5, 'Creating job...');
+        
+        // First, create a job
+        const jobResponse = await fetch(`${API_BASE}/process`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: query,
+                output_dir: outputDirInput.value || '/app/output',
+                upload_to_server: uploadToServerCheckbox.checked
+            })
+        });
+
+        if (jobResponse.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+
+        const jobData = await jobResponse.json();
+        
+        if (!jobData.success || !jobData.job_id) {
+            showStatus(jobData.error || 'Failed to create job', 'error');
+            addLog('error', jobData.error || 'Failed to create job');
+            return;
+        }
+
+        currentJobId = jobData.job_id;
+        addLog('info', `Job created: ${currentJobId}`);
+        updateProgress(10, 'Getting video URL...');
+        
+        // Get download script (pass query as-is, script will handle search if needed)
+        updateProgress(20, 'Generating download script...');
+        const scriptResponse = await fetch(`${API_BASE}/api/get-download-script`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: query,  // Pass query - script will handle URL or search
+                job_id: currentJobId
+            })
+        });
+
+        if (scriptResponse.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+
+        if (!scriptResponse.ok) {
+            const errorData = await scriptResponse.json();
+            showStatus(errorData.error || 'Failed to generate script', 'error');
+            addLog('error', errorData.error || 'Failed to generate script');
+            return;
+        }
+
+        // Download the script
+        const scriptBlob = await scriptResponse.blob();
+        const scriptUrl = URL.createObjectURL(scriptBlob);
+        const a = document.createElement('a');
+        a.href = scriptUrl;
+        a.download = 'download_client_side.py';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(scriptUrl);
+
+        updateProgress(30, 'Download script ready!');
+        showStatus('Download script downloaded! Run it on your machine.', 'info');
+        addLog('info', 'Download script saved as download_client_side.py');
+        addLog('info', 'Next steps:');
+        addLog('info', '1. Open terminal/command prompt');
+        addLog('info', '2. Run: python download_client_side.py [YOUR_PASSWORD]');
+        addLog('info', '3. The script will download using YOUR IP and upload to Render');
+        addLog('info', '4. Processing will continue automatically on Render');
+        
+        // Start polling for status (in case user runs script)
+        startStatusPolling(currentJobId);
+        
+        // Show instructions
+        showStatus('Script downloaded! Run it on your machine to download using your IP.', 'info');
+        updateProgress(30, 'Waiting for client-side download...');
+        
+    } catch (error) {
+        showStatus(`Error: ${error.message}`, 'error');
+        addLog('error', `Client-side download setup failed: ${error.message}`);
+    }
+}
 
 // Start processing state
 function startProcessing() {

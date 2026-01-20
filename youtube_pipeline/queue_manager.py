@@ -39,6 +39,7 @@ class Job:
     error: Optional[str] = None
     progress: int = 0
     message: str = "Waiting in queue..."
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class QueueManager:
@@ -109,7 +110,8 @@ class QueueManager:
                 'completed_at': job.completed_at.isoformat() if job.completed_at else None,
                 'result': job.result,
                 'error': job.error,
-                'queue_position': self._get_queue_position(job_id)
+                'queue_position': self._get_queue_position(job_id),
+                'metadata': job.metadata
             }
     
     def _get_queue_position(self, job_id: str) -> int:
@@ -200,6 +202,14 @@ class QueueManager:
         """Get the current queue length."""
         with self.lock:
             return len(self.queue)
+    
+    def update_job_metadata(self, job_id: str, metadata: Dict[str, Any]):
+        """Update job metadata."""
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job:
+                job.metadata.update(metadata)
+                logger.info(f"Updated metadata for job {job_id}")
     
     def cleanup_old_jobs(self, max_age_hours: int = 24):
         """Remove old completed/failed jobs to free memory."""
