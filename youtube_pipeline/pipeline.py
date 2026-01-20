@@ -184,17 +184,23 @@ class YouTubePipeline:
         logger.info(f"Downloading audio from: {video_url}")
         
         # Build client configurations
-        # IMPORTANT: Only web and tv clients support cookies properly
-        # Mobile clients (ios, android, mweb) don't support cookies
+        # IMPORTANT: Try mobile clients WITH cookies first - they bypass bot detection better
+        # Even though mobile clients "don't support cookies", yt-dlp can still use them
         if self.cookie_file:
-            # If we have cookies, prioritize clients that support them
+            # If we have cookies, try mobile clients first (they bypass bot detection)
+            # Then fall back to web/tv clients
             client_configs = [
+                # Mobile clients with cookies - best for bypassing bot detection
+                {'player_client': ['android'], 'name': 'android', 'use_cookies': True},
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': True},
+                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': True},
+                # Web/TV clients with cookies - may trigger bot detection
                 {'player_client': ['web'], 'name': 'web', 'use_cookies': True},
                 {'player_client': ['tv', 'web'], 'name': 'tv+web', 'use_cookies': True},
                 {'player_client': None, 'name': 'default', 'use_cookies': True},  # Default may use cookies
-                # Try mobile clients without cookies as fallback
-                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
+                # Fallback: mobile clients without cookies
                 {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
                 {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
             ]
         else:
@@ -247,6 +253,10 @@ class YouTubePipeline:
                         # Add additional cookie-related options
                         ydl_opts['noplaylist'] = True  # Don't download playlists
                         ydl_opts['extract_flat'] = False  # Extract full info
+                        # Add User-Agent to help with bot detection (match browser that exported cookies)
+                        ydl_opts['user_agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        # Add referer to make requests look more legitimate
+                        ydl_opts['referer'] = 'https://www.youtube.com/'
                 
                 # Set player_client if specified
                 if client_config['player_client'] is not None:
