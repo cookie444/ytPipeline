@@ -685,6 +685,155 @@ if __name__ == '__main__':
         }), 500
 
 
+@app.route('/api/get-download-url', methods=['POST'])
+@login_required
+def get_download_url():
+    """Get direct download URL for YouTube video (for browser-based download)."""
+    try:
+        data = request.get_json()
+        query = data.get('query')
+        
+        if not query:
+            return jsonify({
+                'success': False,
+                'error': 'Missing query parameter'
+            }), 400
+        
+        # Initialize pipeline to use its search/download logic
+        pipeline = YouTubePipeline(CONFIG_PATH)
+        
+        # Handle search query or direct URL
+        video_url = query
+        if not query.startswith('http'):
+            video_url = pipeline.search_youtube(query)
+            if not video_url:
+                return jsonify({
+                    'success': False,
+                    'error': 'Could not find video on YouTube'
+                }), 404
+        
+        # Use yt-dlp to extract video info and get direct download URL
+        import yt_dlp
+        
+        cookies_file = Path(COOKIES_DIR) / 'cookies.txt'
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+        
+        if cookies_file.exists():
+            ydl_opts['cookiefile'] = str(cookies_file)
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                
+                # Get best audio format URL
+                formats = info.get('formats', [])
+                audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+                
+                if not audio_formats:
+                    # Fallback to best format with audio
+                    audio_formats = [f for f in formats if f.get('acodec') != 'none']
+                
+                if not audio_formats:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No audio format available'
+                    }), 404
+                
+                # Get the best quality audio format
+                best_format = max(audio_formats, key=lambda f: f.get('abr', 0) or 0)
+                download_url = best_format.get('url')
+                
+                if not download_url:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Could not extract download URL'
+                    }), 500
+                
+                return jsonify({
+                    'success': True,
+                    'download_url': download_url,
+                    'title': info.get('title', 'Unknown'),
+                    'duration': info.get('duration', 0),
+                    'format': {
+                        'abr': best_format.get('abr', 0),
+                        'acodec': best_format.get('acodec', 'unknown'),
+                        'ext': best_format.get('ext', 'm4a')
+                    }
+                }), 200
+                
+        except Exception as e:
+            logger.error(f"Error extracting download URL: {e}")
+            return jsonify({
+                'success': False,
+                'error': f'Failed to extract download URL: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error getting download URL: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/download-stems/<job_id>', methods=['GET'])
+@login_required
+def download_stems(job_id: str):
+    """Download the stems ZIP file for a completed job."""
+    try:
+        job_status = queue_manager.get_job_status(job_id)
+        
+        if not job_status:
+            return jsonify({
+                'success': False,
+                'error': 'Job not found'
+            }), 404
+        
+        if job_status['status'] != 'completed':
+            return jsonify({
+                'success': False,
+                'error': f'Job is not completed (status: {job_status["status"]})'
+            }), 400
+        
+        result = job_status.get('result', {})
+        zip_file_path = result.get('zip_file')
+        
+        if not zip_file_path:
+            return jsonify({
+                'success': False,
+                'error': 'No ZIP file available for this job'
+            }), 404
+        
+        zip_path = Path(zip_file_path)
+        if not zip_path.exists():
+            return jsonify({
+                'success': False,
+                'error': 'ZIP file not found on server'
+            }), 404
+        
+        return send_from_directory(
+            zip_path.parent,
+            zip_path.name,
+            as_attachment=True,
+            download_name=zip_path.name
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading stems: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/upload-audio', methods=['POST'])
 @login_required
 def upload_audio():

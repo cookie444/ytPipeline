@@ -147,11 +147,12 @@ processBtn.addEventListener('click', async () => {
     }
 });
 
-// Handle client-side download
+// Handle client-side download - fully browser-based, no Python needed
 async function handleClientSideDownload(query) {
     try {
-        addLog('info', 'Client-side download selected - setting up automatic download...');
-        showStatus('Preparing client-side download...', 'info');
+        startProcessing();
+        addLog('info', 'Browser-based download - using YOUR IP address...');
+        showStatus('Preparing browser download...', 'info');
         updateProgress(5, 'Creating job...');
         
         // First, create a job
@@ -177,27 +178,180 @@ async function handleClientSideDownload(query) {
         if (!jobData.success || !jobData.job_id) {
             showStatus(jobData.error || 'Failed to create job', 'error');
             addLog('error', jobData.error || 'Failed to create job');
+            stopProcessing();
             return;
         }
 
         currentJobId = jobData.job_id;
         addLog('info', `Job created: ${currentJobId}`);
-        updateProgress(10, 'Preparing automatic download...');
+        updateProgress(10, 'Getting download URL...');
         
-        // Ask for permission to run automatically
-        const runAutomatically = await askPermissionToRun();
-        
-        if (runAutomatically) {
-            // Try to execute automatically
-            await executeDownloadAutomatically(query, currentJobId);
-        } else {
-            // Fall back to manual script download
-            await downloadAndRunScript(query, currentJobId);
+        // Get direct download URL from server
+        const urlResponse = await fetch(`${API_BASE}/api/get-download-url`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ query: query })
+        });
+
+        if (urlResponse.status === 401) {
+            window.location.href = '/login';
+            return;
         }
+
+        if (!urlResponse.ok) {
+            const errorData = await urlResponse.json();
+            showStatus(errorData.error || 'Failed to get download URL', 'error');
+            addLog('error', errorData.error || 'Failed to get download URL');
+            stopProcessing();
+            return;
+        }
+
+        const urlData = await urlResponse.json();
+        if (!urlData.success || !urlData.download_url) {
+            showStatus(urlData.error || 'No download URL available', 'error');
+            addLog('error', urlData.error || 'No download URL available');
+            stopProcessing();
+            return;
+        }
+
+        addLog('info', `Found video: ${urlData.title}`);
+        addLog('info', `Duration: ${Math.floor(urlData.duration / 60)}:${String(urlData.duration % 60).padStart(2, '0')}`);
+        updateProgress(20, 'Downloading audio in browser...');
+        addLog('info', 'Downloading using YOUR IP address (not Render\'s)...');
+        
+        // Download audio directly in browser
+        const audioBlob = await downloadAudioInBrowser(urlData.download_url, urlData.format.ext);
+        
+        if (!audioBlob) {
+            showStatus('Download failed', 'error');
+            addLog('error', 'Failed to download audio');
+            stopProcessing();
+            return;
+        }
+
+        updateProgress(50, 'Uploading to Render for processing...');
+        addLog('info', `Uploading ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB to Render...`);
+        
+        // Upload to Render
+        const uploadSuccess = await uploadAudioToRender(audioBlob, currentJobId, urlData.format.ext);
+        
+        if (!uploadSuccess) {
+            showStatus('Upload failed', 'error');
+            addLog('error', 'Failed to upload audio to Render');
+            stopProcessing();
+            return;
+        }
+
+        updateProgress(60, 'Processing on Render...');
+        addLog('info', 'Audio uploaded! Processing will start automatically...');
+        
+        // Start polling for status
+        startStatusPolling(currentJobId);
         
     } catch (error) {
         showStatus(`Error: ${error.message}`, 'error');
-        addLog('error', `Client-side download setup failed: ${error.message}`);
+        addLog('error', `Browser download failed: ${error.message}`);
+        stopProcessing();
+    }
+}
+
+// Download audio directly in browser using fetch
+async function downloadAudioInBrowser(downloadUrl, fileExt) {
+    try {
+        updateProgress(25, 'Connecting to YouTube...');
+        
+        // Fetch the audio with progress tracking
+        const response = await fetch(downloadUrl);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        
+        updateProgress(30, 'Downloading audio stream...');
+        
+        // Read the stream with progress updates
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) break;
+            
+            chunks.push(value);
+            received += value.length;
+            
+            if (total > 0) {
+                const percent = 20 + (received / total) * 25; // 20-45% for download
+                updateProgress(percent, `Downloading... ${(received / 1024 / 1024).toFixed(2)} MB`);
+            }
+        }
+        
+        // Combine chunks into blob
+        const audioBlob = new Blob(chunks, { type: `audio/${fileExt}` });
+        addLog('info', `Download complete: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`);
+        
+        return audioBlob;
+        
+    } catch (error) {
+        addLog('error', `Download error: ${error.message}`);
+        return null;
+    }
+}
+
+// Upload audio blob to Render
+async function uploadAudioToRender(audioBlob, jobId, fileExt) {
+    try {
+        // Create FormData
+        const formData = new FormData();
+        formData.append('audio', audioBlob, `audio.${fileExt}`);
+        formData.append('job_id', jobId);
+        
+        // Upload with progress
+        const xhr = new XMLHttpRequest();
+        
+        return new Promise((resolve, reject) => {
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percent = 50 + (e.loaded / e.total) * 10; // 50-60% for upload
+                    updateProgress(percent, `Uploading... ${((e.loaded / 1024 / 1024).toFixed(2))} MB`);
+                }
+            });
+            
+            xhr.addEventListener('load', () => {
+                if (xhr.status === 200) {
+                    const response = JSON.parse(xhr.responseText);
+                    if (response.success) {
+                        addLog('info', 'Upload successful!');
+                        resolve(true);
+                    } else {
+                        addLog('error', response.error || 'Upload failed');
+                        resolve(false);
+                    }
+                } else {
+                    addLog('error', `Upload failed: HTTP ${xhr.status}`);
+                    resolve(false);
+                }
+            });
+            
+            xhr.addEventListener('error', () => {
+                addLog('error', 'Upload error');
+                resolve(false);
+            });
+            
+            xhr.open('POST', `${API_BASE}/api/upload-audio`);
+            xhr.send(formData);
+        });
+        
+    } catch (error) {
+        addLog('error', `Upload error: ${error.message}`);
+        return false;
     }
 }
 
@@ -514,6 +668,17 @@ async function pollJobStatus(jobId) {
             showStatus('Processing completed successfully!', 'success');
             updateProgress(100, 'Complete!');
             addLog('success', 'Pipeline completed successfully');
+            
+            // Automatically download stems
+            const result = data.result || {};
+            const zipFile = result.zip_file;
+            if (zipFile) {
+                addLog('info', 'Downloading stems...');
+                downloadStems(jobId);
+            } else {
+                addLog('warn', 'No ZIP file available for download');
+            }
+            
             stopProcessing();
         } else if (status === 'failed') {
             clearInterval(statusPollInterval);
@@ -543,6 +708,52 @@ function showStatus(message, type) {
 function clearStatus() {
     statusDiv.className = 'status-message';
     statusDiv.textContent = '';
+}
+
+// Download stems ZIP file
+async function downloadStems(jobId) {
+    try {
+        addLog('info', 'Preparing stem download...');
+        const response = await fetch(`${API_BASE}/api/download-stems/${jobId}`);
+        
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            addLog('error', errorData.error || 'Failed to download stems');
+            return;
+        }
+        
+        // Get filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'stems.zip';
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (filenameMatch) {
+                filename = filenameMatch[1].replace(/['"]/g, '');
+            }
+        }
+        
+        // Download the blob
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        addLog('success', `Stems downloaded: ${filename}`);
+        showStatus(`Stems downloaded: ${filename}`, 'success');
+        
+    } catch (error) {
+        addLog('error', `Download error: ${error.message}`);
+    }
 }
 
 // Add log entry
