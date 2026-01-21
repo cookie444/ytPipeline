@@ -1,10 +1,13 @@
 # Dockerfile for YouTube Audio Processing Pipeline
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies including Node.js for yt-dlp signature solving
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
