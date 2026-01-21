@@ -713,64 +713,93 @@ def get_download_url():
                 }), 404
         
         # Use yt-dlp to extract video info and get direct download URL
+        # Use the same client configurations as the main download function
         import yt_dlp
         
         cookies_file = Path(COOKIES_DIR) / 'cookies.txt'
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        }
         
+        # Build client configurations (same as pipeline.py)
         if cookies_file.exists():
-            ydl_opts['cookiefile'] = str(cookies_file)
+            client_configs = [
+                # Mobile clients WITHOUT cookies - best for bypassing bot detection
+                {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
+                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
+                # Web/TV clients WITH cookies - for age-restricted content
+                {'player_client': ['web'], 'name': 'web', 'use_cookies': True},
+                {'player_client': ['tv', 'web'], 'name': 'tv+web', 'use_cookies': True},
+                {'player_client': None, 'name': 'default', 'use_cookies': True},
+            ]
+        else:
+            client_configs = [
+                {'player_client': None, 'name': 'default', 'use_cookies': False},
+                {'player_client': ['web'], 'name': 'web', 'use_cookies': False},
+                {'player_client': ['ios'], 'name': 'ios', 'use_cookies': False},
+                {'player_client': ['android'], 'name': 'android', 'use_cookies': False},
+                {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
+            ]
         
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
+        last_error = None
+        for config in client_configs:
+            try:
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': False,
+                    'extract_flat': False,
+                }
                 
-                # Get best audio format URL
-                formats = info.get('formats', [])
-                audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+                if config['player_client']:
+                    ydl_opts['player_client'] = config['player_client']
                 
-                if not audio_formats:
-                    # Fallback to best format with audio
-                    audio_formats = [f for f in formats if f.get('acodec') != 'none']
+                if config['use_cookies'] and cookies_file.exists():
+                    ydl_opts['cookiefile'] = str(cookies_file)
                 
-                if not audio_formats:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                    
+                    # Get best audio format URL
+                    formats = info.get('formats', [])
+                    audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+                    
+                    if not audio_formats:
+                        # Fallback to best format with audio
+                        audio_formats = [f for f in formats if f.get('acodec') != 'none']
+                    
+                    if not audio_formats:
+                        last_error = 'No audio format available'
+                        continue
+                    
+                    # Get the best quality audio format
+                    best_format = max(audio_formats, key=lambda f: f.get('abr', 0) or 0)
+                    download_url = best_format.get('url')
+                    
+                    if not download_url:
+                        last_error = 'Could not extract download URL'
+                        continue
+                    
                     return jsonify({
-                        'success': False,
-                        'error': 'No audio format available'
-                    }), 404
-                
-                # Get the best quality audio format
-                best_format = max(audio_formats, key=lambda f: f.get('abr', 0) or 0)
-                download_url = best_format.get('url')
-                
-                if not download_url:
-                    return jsonify({
-                        'success': False,
-                        'error': 'Could not extract download URL'
-                    }), 500
-                
-                return jsonify({
-                    'success': True,
-                    'download_url': download_url,
-                    'title': info.get('title', 'Unknown'),
-                    'duration': info.get('duration', 0),
-                    'format': {
-                        'abr': best_format.get('abr', 0),
-                        'acodec': best_format.get('acodec', 'unknown'),
-                        'ext': best_format.get('ext', 'm4a')
-                    }
-                }), 200
-                
-        except Exception as e:
-            logger.error(f"Error extracting download URL: {e}")
-            return jsonify({
-                'success': False,
-                'error': f'Failed to extract download URL: {str(e)}'
-            }), 500
+                        'success': True,
+                        'download_url': download_url,
+                        'title': info.get('title', 'Unknown'),
+                        'duration': info.get('duration', 0),
+                        'format': {
+                            'abr': best_format.get('abr', 0),
+                            'acodec': best_format.get('acodec', 'unknown'),
+                            'ext': best_format.get('ext', 'm4a')
+                        }
+                    }), 200
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Error with client '{config['name']}': {last_error}, trying next...")
+                continue
+        
+        # All clients failed
+        logger.error(f"All clients failed. Last error: {last_error}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to extract download URL: {last_error}'
+        }), 500
             
     except Exception as e:
         logger.error(f"Error getting download URL: {e}")
