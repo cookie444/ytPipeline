@@ -211,6 +211,11 @@ class YouTubePipeline:
                 {'player_client': ['mweb'], 'name': 'mweb', 'use_cookies': False},
             ]
         
+        # Check for proxy configuration from environment variable
+        proxy_url = os.getenv('YOUTUBE_PROXY_URL')
+        if proxy_url:
+            logger.info(f"Using proxy: {proxy_url}")
+        
         ydl_opts_base = {
             'outtmpl': str(output_path / '%(title)s.%(ext)s'),
             'postprocessors': [{
@@ -246,6 +251,10 @@ class YouTubePipeline:
                 'Upgrade-Insecure-Requests': '1',
             },
         }
+        
+        # Add proxy if configured
+        if proxy_url:
+            ydl_opts_base['proxy'] = proxy_url
         
         # Try each client configuration
         last_error = None

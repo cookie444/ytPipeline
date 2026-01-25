@@ -784,6 +784,12 @@ def get_download_url():
                     'extract_flat': False,
                 }
                 
+                # Add proxy if configured
+                proxy_url = os.getenv('YOUTUBE_PROXY_URL')
+                if proxy_url:
+                    ydl_opts['proxy'] = proxy_url
+                    logger.info(f"Using proxy for URL extraction: {proxy_url}")
+                
                 if config['player_client']:
                     ydl_opts['player_client'] = config['player_client']
                 
