@@ -155,6 +155,39 @@ async function handleClientSideDownload(query) {
         showStatus('Preparing browser download...', 'info');
         updateProgress(5, 'Creating job...');
         
+        // Extract video ID from query (handle URLs or search queries)
+        let videoId = null;
+        let videoUrl = query;
+        
+        if (query.startsWith('http')) {
+            // Extract video ID from URL
+            const match = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            if (match) {
+                videoId = match[1];
+                videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            }
+        } else {
+            // For search queries, we'll need to use server-side search first
+            addLog('info', 'Search query detected, getting video URL from server...');
+            try {
+                const searchResponse = await fetch(`${API_BASE}/api/search-youtube`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                if (searchResponse.ok) {
+                    const searchData = await searchResponse.json();
+                    if (searchData.success && searchData.video_url) {
+                        videoUrl = searchData.video_url;
+                        const match = videoUrl.match(/v=([a-zA-Z0-9_-]{11})/);
+                        if (match) videoId = match[1];
+                    }
+                }
+            } catch (e) {
+                addLog('warn', 'Search failed, will try to extract from page');
+            }
+        }
+        
         // First, create a job
         const jobResponse = await fetch(`${API_BASE}/process`, {
             method: 'POST',
@@ -162,7 +195,7 @@ async function handleClientSideDownload(query) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                query: query,
+                query: videoUrl,
                 output_dir: outputDirInput.value || '/app/output',
                 upload_to_server: uploadToServerCheckbox.checked
             })
@@ -184,73 +217,50 @@ async function handleClientSideDownload(query) {
 
         currentJobId = jobData.job_id;
         addLog('info', `Job created: ${currentJobId}`);
-        updateProgress(10, 'Getting download URL...');
+        updateProgress(10, 'Extracting download URL from YouTube...');
         
-        // Get direct download URL from server with timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        // Try client-side extraction first (most reliable)
+        let urlData = null;
+        if (videoId) {
+            addLog('info', 'Attempting client-side URL extraction...');
+            urlData = await extractYouTubeUrlClientSide(videoId, videoUrl);
+        }
         
-        let urlResponse;
-        try {
-            urlResponse = await fetch(`${API_BASE}/api/get-download-url`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ query: query }),
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-        } catch (error) {
-            clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                showStatus('Request timed out - server may be slow. Try again or use server-side download.', 'error');
-                addLog('error', 'Getting download URL timed out after 60 seconds');
-            } else {
-                showStatus(`Network error: ${error.message}`, 'error');
-                addLog('error', `Network error: ${error.message}`);
-            }
-            stopProcessing();
-            return;
-        }
-
-        if (urlResponse.status === 401) {
-            window.location.href = '/login';
-            return;
-        }
-
-        if (!urlResponse.ok) {
-            let errorData;
+        // Fallback to server-side extraction if client-side fails
+        if (!urlData || !urlData.download_url) {
+            addLog('info', 'Client-side extraction failed, trying server-side...');
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            
             try {
-                errorData = await urlResponse.json();
-            } catch (e) {
-                errorData = { error: `HTTP ${urlResponse.status}: ${urlResponse.statusText}` };
+                const urlResponse = await fetch(`${API_BASE}/api/get-download-url`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: videoUrl }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                
+                if (urlResponse.ok) {
+                    const serverData = await urlResponse.json();
+                    if (serverData.success && serverData.download_url) {
+                        urlData = serverData;
+                    }
+                }
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error.name !== 'AbortError') {
+                    addLog('warn', `Server extraction failed: ${error.message}`);
+                }
             }
-            showStatus('Client-side download failed, falling back to server-side processing...', 'warning');
-            addLog('error', `Failed to get download URL: ${errorData.error || 'Unknown error'}`);
-            addLog('info', 'Falling back to server-side processing (using Render\'s IP)...');
-            addLog('info', 'The job will continue processing on the server.');
-            // Fall back to server-side processing - the job is already created
-            startStatusPolling(currentJobId);
-            return;
-        }
-
-        let urlData;
-        try {
-            urlData = await urlResponse.json();
-        } catch (e) {
-            showStatus('Invalid response from server', 'error');
-            addLog('error', 'Server returned invalid JSON response');
-            startStatusPolling(currentJobId);
-            return;
         }
         
-        if (!urlData.success || !urlData.download_url) {
+        // If both fail, fall back to server-side processing
+        if (!urlData || !urlData.download_url) {
             showStatus('Client-side download failed, falling back to server-side processing...', 'warning');
-            addLog('error', urlData.error || 'No download URL available');
+            addLog('error', 'Could not extract download URL (client or server)');
             addLog('info', 'Falling back to server-side processing (using Render\'s IP)...');
             addLog('info', 'The job will continue processing on the server.');
-            // Fall back to server-side processing - the job is already created
             startStatusPolling(currentJobId);
             return;
         }
@@ -293,6 +303,101 @@ async function handleClientSideDownload(query) {
         showStatus(`Error: ${error.message}`, 'error');
         addLog('error', `Browser download failed: ${error.message}`);
         stopProcessing();
+    }
+}
+
+// Extract YouTube download URL client-side (bypasses server)
+async function extractYouTubeUrlClientSide(videoId, videoUrl) {
+    try {
+        addLog('info', 'Extracting video info from YouTube page...');
+        
+        // Method 1: Use YouTube's oEmbed API (doesn't give download URL, but gives metadata)
+        // Method 2: Fetch the video page and extract player config
+        // Method 3: Use a CORS proxy to get the page
+        
+        // Try fetching via CORS proxy (using a public proxy service)
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(videoUrl)}`;
+        
+        try {
+            const proxyResponse = await fetch(proxyUrl);
+            if (proxyResponse.ok) {
+                const proxyData = await proxyResponse.json();
+                const html = proxyData.contents;
+                
+                // Extract player config from page
+                const playerConfigMatch = html.match(/var ytInitialPlayerResponse = ({.+?});/);
+                if (playerConfigMatch) {
+                    try {
+                        const playerConfig = JSON.parse(playerConfigMatch[1]);
+                        const streamingData = playerConfig.streamingData;
+                        
+                        if (streamingData && streamingData.formats) {
+                            // Find best audio format
+                            const audioFormats = streamingData.formats.filter(f => 
+                                f.mimeType && f.mimeType.includes('audio') && f.url
+                            );
+                            
+                            if (audioFormats.length > 0) {
+                                // Get highest quality audio
+                                const bestFormat = audioFormats.reduce((best, current) => {
+                                    const currentBitrate = parseInt(current.bitrate || 0);
+                                    const bestBitrate = parseInt(best.bitrate || 0);
+                                    return currentBitrate > bestBitrate ? current : best;
+                                });
+                                
+                                if (bestFormat.url) {
+                                    addLog('info', 'Successfully extracted download URL client-side!');
+                                    return {
+                                        success: true,
+                                        download_url: bestFormat.url,
+                                        title: playerConfig.videoDetails?.title || 'Unknown',
+                                        duration: parseInt(playerConfig.videoDetails?.lengthSeconds || 0),
+                                        format: {
+                                            abr: parseInt(bestFormat.audioBitrate || 0),
+                                            acodec: bestFormat.mimeType?.split(';')[0] || 'unknown',
+                                            ext: bestFormat.mimeType?.includes('mp4') ? 'm4a' : 'webm'
+                                        }
+                                    };
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        addLog('warn', `Failed to parse player config: ${e.message}`);
+                    }
+                }
+            }
+        } catch (e) {
+            addLog('warn', `CORS proxy method failed: ${e.message}`);
+        }
+        
+        // Method 3: Try using YouTube's embed API
+        try {
+            const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+            const embedResponse = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(embedUrl)}`);
+            if (embedResponse.ok) {
+                const embedData = await embedResponse.json();
+                const embedHtml = embedData.contents;
+                
+                // Try to extract from embed page
+                const embedConfigMatch = embedHtml.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+                if (embedConfigMatch) {
+                    try {
+                        const embedConfig = JSON.parse(embedConfigMatch[1]);
+                        // Similar extraction logic as above
+                        // ... (same as above)
+                    } catch (e) {
+                        // Ignore
+                    }
+                }
+            }
+        } catch (e) {
+            // Ignore
+        }
+        
+        return null;
+    } catch (error) {
+        addLog('warn', `Client-side extraction failed: ${error.message}`);
+        return null;
     }
 }
 

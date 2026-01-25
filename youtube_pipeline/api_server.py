@@ -685,6 +685,42 @@ if __name__ == '__main__':
         }), 500
 
 
+@app.route('/api/search-youtube', methods=['POST'])
+@login_required
+def search_youtube():
+    """Search YouTube and return the first video URL."""
+    try:
+        data = request.get_json()
+        query = data.get('query')
+        
+        if not query:
+            return jsonify({
+                'success': False,
+                'error': 'Missing query parameter'
+            }), 400
+        
+        pipeline = YouTubePipeline(CONFIG_PATH)
+        video_url = pipeline.search_youtube(query)
+        
+        if not video_url:
+            return jsonify({
+                'success': False,
+                'error': 'Could not find video on YouTube'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'video_url': video_url
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error searching YouTube: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/get-download-url', methods=['POST'])
 @login_required
 def get_download_url():
