@@ -186,14 +186,33 @@ async function handleClientSideDownload(query) {
         addLog('info', `Job created: ${currentJobId}`);
         updateProgress(10, 'Getting download URL...');
         
-        // Get direct download URL from server
-        const urlResponse = await fetch(`${API_BASE}/api/get-download-url`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ query: query })
-        });
+        // Get direct download URL from server with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        
+        let urlResponse;
+        try {
+            urlResponse = await fetch(`${API_BASE}/api/get-download-url`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ query: query }),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                showStatus('Request timed out - server may be slow. Try again or use server-side download.', 'error');
+                addLog('error', 'Getting download URL timed out after 60 seconds');
+            } else {
+                showStatus(`Network error: ${error.message}`, 'error');
+                addLog('error', `Network error: ${error.message}`);
+            }
+            stopProcessing();
+            return;
+        }
 
         if (urlResponse.status === 401) {
             window.location.href = '/login';
@@ -201,18 +220,38 @@ async function handleClientSideDownload(query) {
         }
 
         if (!urlResponse.ok) {
-            const errorData = await urlResponse.json();
-            showStatus(errorData.error || 'Failed to get download URL', 'error');
-            addLog('error', errorData.error || 'Failed to get download URL');
-            stopProcessing();
+            let errorData;
+            try {
+                errorData = await urlResponse.json();
+            } catch (e) {
+                errorData = { error: `HTTP ${urlResponse.status}: ${urlResponse.statusText}` };
+            }
+            showStatus('Client-side download failed, falling back to server-side processing...', 'warning');
+            addLog('error', `Failed to get download URL: ${errorData.error || 'Unknown error'}`);
+            addLog('info', 'Falling back to server-side processing (using Render\'s IP)...');
+            addLog('info', 'The job will continue processing on the server.');
+            // Fall back to server-side processing - the job is already created
+            startStatusPolling(currentJobId);
             return;
         }
 
-        const urlData = await urlResponse.json();
+        let urlData;
+        try {
+            urlData = await urlResponse.json();
+        } catch (e) {
+            showStatus('Invalid response from server', 'error');
+            addLog('error', 'Server returned invalid JSON response');
+            startStatusPolling(currentJobId);
+            return;
+        }
+        
         if (!urlData.success || !urlData.download_url) {
-            showStatus(urlData.error || 'No download URL available', 'error');
+            showStatus('Client-side download failed, falling back to server-side processing...', 'warning');
             addLog('error', urlData.error || 'No download URL available');
-            stopProcessing();
+            addLog('info', 'Falling back to server-side processing (using Render\'s IP)...');
+            addLog('info', 'The job will continue processing on the server.');
+            // Fall back to server-side processing - the job is already created
+            startStatusPolling(currentJobId);
             return;
         }
 
