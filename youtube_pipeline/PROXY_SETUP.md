@@ -63,12 +63,59 @@ lt --port 8888
 4. YouTube sees your residential IP instead of Render's datacenter IP
 5. Downloads work! 🎉
 
-## Security Notes
+## Security Risks & Mitigations
 
-- The proxy server accepts connections from anywhere (via the tunnel)
-- Consider adding authentication if you're concerned about security
-- The proxy only forwards requests, it doesn't store data
-- Your IP will be visible to YouTube (this is intentional)
+### ⚠️ Potential Risks
+
+1. **Anyone with the ngrok URL can use your proxy**
+   - If someone discovers your ngrok URL, they could use your IP for requests
+   - This could be used for malicious activities (though unlikely)
+   - Your IP could be logged by websites you proxy to
+
+2. **Your residential IP is exposed**
+   - YouTube will see your home IP address
+   - Your ISP might notice unusual traffic patterns
+   - Could potentially be associated with your identity
+
+3. **Legal/Terms of Service concerns**
+   - Using a proxy to bypass YouTube's restrictions may violate YouTube's ToS
+   - Downloading copyrighted content has legal implications depending on jurisdiction
+   - The proxy itself isn't illegal, but usage might be
+
+4. **Network security**
+   - If your computer is compromised, the proxy could be abused
+   - Need to keep your computer running continuously
+
+### ✅ Security Mitigations
+
+**Use the secure version:**
+```bash
+# Set strong password
+export PROXY_USERNAME=your_username
+export PROXY_PASSWORD=your_strong_password
+python local_proxy_secure.py
+```
+
+**On Render, use authenticated URL:**
+```
+YOUTUBE_PROXY_URL=http://your_username:your_password@your-ngrok-url
+```
+
+**Additional safety measures:**
+1. **Use ngrok IP whitelist** (if available on your plan)
+2. **Only run when needed** - don't leave it running 24/7
+3. **Monitor logs** - check what's being proxied
+4. **Use strong password** - don't use default credentials
+5. **Consider VPN** - route proxy through VPN for extra anonymity
+6. **Check your ISP's ToS** - some ISPs prohibit running servers
+
+### 🛡️ Safer Alternatives
+
+If you're concerned about risks:
+1. **Use a VPS** - Rent a cheap VPS with residential IP instead
+2. **Use a proxy service** - Pay for a residential proxy service (Bright Data, etc.)
+3. **Use VPN + proxy** - Route through VPN first for extra protection
+4. **Manual download** - Download locally, upload to Render (no proxy needed)
 
 ## Troubleshooting
 
