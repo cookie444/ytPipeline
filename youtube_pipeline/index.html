@@ -75,6 +75,44 @@
                     <small class="help-text">Download using YOUR IP address instead of Render's datacenter IP. This bypasses YouTube's bot detection. You'll download a script and run it on your machine.</small>
                 </div>
 
+                <div class="form-group" style="border: 2px dashed #4CAF50; padding: 15px; border-radius: 8px; background-color: #f0f8f0;">
+                    <h3 style="margin-top: 0; color: #2e7d32;">🔄 Workaround: Manual Download</h3>
+                    <p style="margin: 10px 0; color: #555;">If automatic downloads fail, use this workaround:</p>
+                    
+                    <div style="margin: 15px 0;">
+                        <button id="open-ytmp3-btn" class="btn" style="background-color: #4CAF50; color: white; margin-bottom: 10px;">
+                            🌐 Open ytmp3.as (Download MP3 there)
+                        </button>
+                        <small class="help-text" style="display: block; margin-top: 5px;">Click to open ytmp3.as in a new tab. Download the MP3, then upload it below.</small>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="manual-audio-file"><strong>Upload Audio File</strong> (from ytmp3.as or similar):</label>
+                        <div class="input-group">
+                            <input 
+                                type="file" 
+                                id="manual-audio-file"
+                                accept="audio/*,.mp3,.m4a,.webm,.wav"
+                                class="input-field"
+                                style="padding: 8px;"
+                            >
+                            <button id="upload-manual-audio-btn" class="btn btn-secondary">Upload & Process</button>
+                        </div>
+                        <small class="help-text">Upload an audio file you downloaded from ytmp3.as or another service. We'll separate it into stems.</small>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="manual-download-url"><strong>Or Paste Direct Download URL:</strong></label>
+                        <input 
+                            type="text" 
+                            id="manual-download-url"
+                            placeholder="https://... (direct download URL from ytmp3.as or similar)"
+                            class="input-field"
+                        >
+                        <small class="help-text">If you have a direct download URL, paste it here and we'll download it automatically.</small>
+                    </div>
+                </div>
+
                 <div class="form-group">
                     <label for="cookies-file">Upload Cookies File (for age-restricted videos):</label>
                     <div class="input-group">
