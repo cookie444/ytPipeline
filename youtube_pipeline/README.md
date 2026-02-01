@@ -2,6 +2,8 @@
 
 **This project is deprecated due to YouTube API calls from Render being blocked.**
 
+**Service Status: SUSPENDED** - The Render service has been suspended. Re-enable it to see only the working GUI in action: [Render Dashboard](https://dashboard.render.com/web/srv-d5e0u53uibrs73910fug)
+
 YouTube's bot detection system blocks requests from Render's shared IP addresses, making it impossible to reliably download videos from YouTube using this service. Despite attempts to work around this (including proxy solutions, client-side downloads, and various yt-dlp configurations), the service cannot consistently bypass YouTube's restrictions.
 
 ## What This Project Was
