@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-REST API server for the YouTube Audio Processing Pipeline with Web GUI.
+⚠️ DEPRECATED: REST API server for the YouTube Audio Processing Pipeline with Web GUI.
+
+This project is deprecated due to YouTube API calls from Render being blocked.
+YouTube's bot detection system blocks requests from Render's shared IP addresses.
+
 Allows triggering the pipeline via HTTP requests with job queue system.
 """
 
